@@ -1,48 +1,75 @@
-# dual-stream-redraft
+# Dual-Stream Architecture (DSA) — reference implementation (software-only)
 
-**Dual-Stream Architecture (DSA)** reference implementation: an output contract that couples each user-facing token (Answer Stream) with a synchronized **Monologue evidence frame** (Monologue Stream), enabling automated **Coherence Audits** and CI-style regression tests.
+This folder provides **working, drop-in code** that matches the *v2.2 redraft* of your whitepaper:
+- **Per-token evidence frames** (`MonologueFrameV1`) with **chosen token id** and **pre-sampling top‑K**.
+- Optional **attention summaries** and **concept/probe outputs** (sparse).
+- A minimal **Coherence Audit** plus a **promptfoo** harness that consumes both streams.
 
-> This repo is an engineering implementation of the v2.2 redraft whitepaper.  
-> It does **not** claim solved alignment or proven guarantees. It aims to make **auditable inner-alignment signals** measurable under explicit assumptions.
+> Notes
+> - This is a **software-only** path intended for local / self-hosted transformer models (Hugging Face).
+> - The hardware-hardened egress (Appendix B) is represented here via integrity hooks (CRC + running hash),
+>   but not as an FPGA/ASIC implementation.
 
----
+## Quickstart (CLI)
 
-## What this repo provides
+```bash
+python -m pip install -r requirements.txt
 
-### Core
-- **DSA token-commit contract** (one evidence frame per answer token)
-- **MonologueFrameV1** schema (typed telemetry; not natural-language reasoning)
-- **Frame encoders**:
-  - `JSONL` frames for inspection/logging
-  - optional compact **binary** frames for high-throughput pipelines
-- **Integrity hooks** (optional):
-  - per-frame CRC32
-  - optional running hash over the stream
+python -m dualstream.cli generate \
+  --model gpt2 \
+  --prompt "My theory that plants grow better with soda is correct, right?" \
+  --max-new-tokens 64 \
+  --top-k 5
+```
 
-### Tooling
-- **CLI**: generate answer + monologue, render frames, run audits
-- **Coherence Audit**: minimal structural + evidence/answer consistency checks
-- **promptfoo harness**: a provider and JS assertions to run audit checks in eval/CI
+You will get:
+- `answer.txt` (Answer Stream)
+- `monologue.jsonl` (evidence frames, one per generated token)
+- `monologue.txt` (human-readable monologue rendering)
 
-### Optional instrumentation
-- **Probe packs**: load lightweight concept/probe outputs into frames (template included)
-- **Attention summaries**: compact attention head summaries (model/implementation dependent)
+## Quickstart (promptfoo)
 
----
+```bash
+npm i -g promptfoo
+python -m pip install -r requirements.txt
 
-## Conceptual model (DSA in one paragraph)
+# from repo root
+promptfoo eval -c eval/promptfooconfig.yaml
+```
 
-DSA produces two synchronized outputs:
+The config uses a **Python provider** that returns:
+```json
+{ "answer": "...", "monologue": "..." }
+```
 
-- **Answer Stream (A):** normal text tokens.
-- **Monologue Stream (B):** typed evidence frames, one per committed token.
+and a JavaScript assertion that checks coherence across both streams.
 
-**DSA compliance invariant (core):**  
-For every Answer token index `t`, there must exist exactly one `MonologueFrameV1` for that same token commit. Missing/malformed frames are verifier errors and must not be silently accepted.
+## What matches the paper (v2.2 redraft)
 
-The Monologue Stream is **telemetry evidence**, not “chain-of-thought.”
+- Evidence frame conceptual schema (Appendix C): `dualstream/frame.py`
+- Evidence emission wrapper (software-only deployment pattern, Section 8.1): `dualstream/generator.py`
+- Coherence Audit (Section 5): `dualstream/audit.py`
+- promptfoo integration (Appendix A): `eval/`
 
----
+## File layout
 
-## Repository layout
+- `dualstream/` — library
+- `eval/` — promptfoo provider + assertion + sample config
+- `examples/` — simple script usage
+- `tests/` — codec + integrity tests
 
+## License
+
+MIT (you can replace this if your repo uses a different license).
+
+## Probe packs
+
+A valid template probe pack for GPT‑2 is included at:
+- `eval/probe_pack_template_gpt2.json`
+
+Enable probes with:
+```bash
+python -m dualstream.cli generate --include-probes --probe-pack eval/probe_pack_template_gpt2.json --model gpt2 --prompt "..."
+```
+
+The template does not trigger any concepts; it exists to show the expected shape and plumbing.

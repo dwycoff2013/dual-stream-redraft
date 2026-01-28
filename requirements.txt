@@ -1,0 +1,7 @@
+torch>=2.1
+transformers>=4.41
+numpy>=1.24
+tqdm>=4.66
+# Optional
+# blake3>=0.4
+# sentencepiece>=0.1.99
