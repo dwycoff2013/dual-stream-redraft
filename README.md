@@ -1,6 +1,6 @@
 # Dual-Stream Architecture (DSA) — reference implementation (software-only)
 
-This folder provides **working, drop-in code** that matches the *v2.2 redraft* of your whitepaper:
+This folder provides **working code** that matches the *v2.2 redraft* of the whitepaper:
 - **Per-token evidence frames** (`MonologueFrameV1`) with **chosen token id** and **pre-sampling top‑K**.
 - Optional **attention summaries** and **concept/probe outputs** (sparse).
 - A minimal **Coherence Audit** plus a **promptfoo** harness that consumes both streams.
