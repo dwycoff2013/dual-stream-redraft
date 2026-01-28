@@ -60,7 +60,7 @@ and a JavaScript assertion that checks coherence across both streams.
 
 ## License
 
-MIT (you can replace this if your repo uses a different license).
+MIT 
 
 ## Probe packs
 
