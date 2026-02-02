@@ -85,11 +85,11 @@ class MonologueFrameV1:
 
 def _f16_pack(x: float) -> bytes:
     # Enforce little-endian float16.
-    return np.float16(x).newbyteorder("<").tobytes()
+    return struct.pack("<e", x)
 
 
 def _f16_unpack(b: bytes) -> float:
-    return float(np.frombuffer(b, dtype=np.dtype("<f2"))[0])
+    return struct.unpack("<e", b)[0]
 
 
 def encode_frame(frame: MonologueFrameV1, include_crc32: bool = True) -> bytes:
