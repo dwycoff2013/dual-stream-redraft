@@ -85,7 +85,7 @@ class MonologueFrameV1:
 
 def _f16_pack(x: float) -> bytes:
     # Enforce little-endian float16.
-    return np.float16(x).newbyteorder("<").tobytes()
+    return np.asarray(x, dtype=np.dtype("<f2")).tobytes()
 
 
 def _f16_unpack(b: bytes) -> float:

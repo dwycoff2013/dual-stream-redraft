@@ -22,6 +22,26 @@ python -m dualstream.cli generate \
   --top-k 5
 ```
 
+### Offline usage (download once, run locally)
+
+```bash
+python -m pip install -r requirements.txt
+
+# Download a model snapshot for offline use (default: gpt2).
+python scripts/download_model.py --model gpt2 --local-dir ./models/gpt2
+
+# Optional: Gemma 3 1B (requires HF auth + gated access).
+# python scripts/download_model.py --model google/gemma-3-1b-it --local-dir ./models/gemma-3-1b-it
+
+# Run entirely offline using local files only.
+python -m dualstream.cli generate \
+  --model ./models/gpt2 \
+  --prompt "My theory that plants grow better with soda is correct, right?" \
+  --max-new-tokens 64 \
+  --top-k 5 \
+  --offline
+```
+
 You will get:
 - `answer.txt` (Answer Stream)
 - `monologue.jsonl` (evidence frames, one per generated token)

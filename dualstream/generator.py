@@ -43,6 +43,8 @@ class GenerationConfig:
     include_running_hash: bool = True
 
     device: Optional[str] = None  # e.g. "cuda", "cpu"
+    local_files_only: bool = False
+    cache_dir: Optional[str] = None
 
 
 class DualStreamGenerator:
@@ -53,12 +55,30 @@ class DualStreamGenerator:
     pre-sampling top-K logits as required by the DSA contract.
     """
 
-    def __init__(self, model_name: str, *, device: Optional[str] = None):
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        device: Optional[str] = None,
+        local_files_only: bool = False,
+        cache_dir: Optional[str] = None,
+    ):
         self.model_name = model_name
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.local_files_only = local_files_only
+        self.cache_dir = cache_dir
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            use_fast=True,
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+        )
         self.model.to(self.device)
         self.model.eval()
 

@@ -25,12 +25,19 @@ def cmd_generate(args: argparse.Namespace) -> int:
         include_crc32=not args.no_crc32,
         include_running_hash=not args.no_running_hash,
         device=args.device,
+        local_files_only=args.offline,
+        cache_dir=args.cache_dir,
     )
 
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    gen = DualStreamGenerator(cfg.model, device=cfg.device)
+    gen = DualStreamGenerator(
+        cfg.model,
+        device=cfg.device,
+        local_files_only=cfg.local_files_only,
+        cache_dir=cfg.cache_dir,
+    )
     result = gen.generate(args.prompt, cfg)
 
     frames = result["frames"]
@@ -100,6 +107,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--no-crc32", action="store_true", help="Do not append crc32 to frames")
     g.add_argument("--no-running-hash", action="store_true", help="Disable running hash accumulation")
     g.add_argument("--device", default=None, help="Override device, e.g. cpu/cuda")
+    g.add_argument("--offline", action="store_true", help="Use local HF cache only (no network)")
+    g.add_argument("--cache-dir", default=None, help="Override HF cache directory")
 
     g.set_defaults(func=cmd_generate)
     return p
