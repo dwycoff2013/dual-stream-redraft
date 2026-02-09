@@ -15,7 +15,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from .frame import MonologueFrameV1, TopKToken, AttnSummary, encode_frame
 from .integrity import RunningHash
 from .probes import ProbePack, run_probes
-from .vocab import DEFAULT_CONCEPT_VOCAB
+from .vocab import (
+    DEFAULT_CONCEPT_VOCAB,
+    CONCEPT_CONFIRMATION_REQUEST,
+    CONCEPT_FACTUALITY_CONCERN,
+    CONCEPT_POLICY_TENSION,
+)
 
 
 @dataclass
@@ -57,8 +62,13 @@ class DualStreamGenerator:
         self.model_name = model_name
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name)
+        # Check if model_name is a local directory
+        is_local = os.path.isdir(model_name)
+        if is_local:
+            print(f"DualStreamGenerator: Loading local model from '{model_name}'...")
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, local_files_only=is_local)
+        self.model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=is_local)
         self.model.to(self.device)
         self.model.eval()
 
@@ -99,11 +109,11 @@ class DualStreamGenerator:
 
         # Confirmation request heuristic
         if any(q in prompt.lower() for q in ["right?", "correct?", "isn't it", "is it true", "am i right"]):
-            hits.append((1001, 0.83))
+            hits.append((CONCEPT_CONFIRMATION_REQUEST, 0.83))
 
         # Rough "factuality concern" heuristic: mark if prompt contains a strong claim form.
-        if re_search := __import__("re").search(r"\b(is|are|was|were)\b.*\b(correct|true|right)\b", prompt.lower()):
-            hits.append((2001, 0.72))
+        if re.search(r"\b(is|are|was|were)\b.*\b(correct|true|right)\b", prompt.lower()):
+            hits.append((CONCEPT_FACTUALITY_CONCERN, 0.72))
 
         # Tension heuristic: if topK includes strong affirmation tokens.
         try:
@@ -113,7 +123,7 @@ class DualStreamGenerator:
                 if t in {"yes", "absolutely", "correct", "right"}:
                     affirm_prob += float(p)
             if affirm_prob >= 0.10:
-                hits.append((3001, min(0.95, 0.50 + affirm_prob)))
+                hits.append((CONCEPT_POLICY_TENSION, min(0.95, 0.50 + affirm_prob)))
         except Exception:
             pass
 
@@ -235,7 +245,8 @@ class DualStreamGenerator:
 
                 # Next step: feed only the chosen token (cached KV handles history)
                 input_ids = torch.tensor([[chosen_id]], device=device, dtype=torch.long)
-                attention_mask = torch.ones_like(input_ids, device=device)
+                # Append to attention mask to maintain context history
+                attention_mask = torch.cat([attention_mask, torch.ones((1, 1), device=device, dtype=torch.long)], dim=1)
 
         answer_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
 

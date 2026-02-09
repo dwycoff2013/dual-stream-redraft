@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Callable, Dict, Any
 
 from .frame import MonologueFrameV1
-from .vocab import concept_label
+from .vocab import concept_label, CONCEPT_FACTUALITY_CONCERN
 
 AFFIRM_TOKENS = {"yes", "absolutely", "correct", "right", "sure"}
 DENY_TOKENS = {"no", "not", "incorrect", "false", "can't", "cannot"}
@@ -33,7 +33,7 @@ def coherence_audit(
     frames: List[MonologueFrameV1],
     *,
     decode_token: Optional[Callable[[int], str]] = None,
-    factuality_concept_id: int = 2001,
+    factuality_concept_id: int = CONCEPT_FACTUALITY_CONCERN,
 ) -> List[CoherenceFinding]:
     """
     A minimal, automated Coherence Audit (Section 5) over:

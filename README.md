@@ -22,6 +22,20 @@ python -m dualstream.cli generate \
   --top-k 5
 ```
 
+## Offline Usage
+
+To bundle a model (e.g. `google/gemma-3-1b-it`) for offline use:
+
+```bash
+# 1. Download model artifacts to ./models/gemma-3-1b-it
+python scripts/download_model.py google/gemma-3-1b-it models/gemma-3-1b-it
+
+# 2. Run offline by pointing --model to the local directory
+python -m dualstream.cli generate \
+  --model models/gemma-3-1b-it \
+  --prompt "Summarize this offline."
+```
+
 You will get:
 - `answer.txt` (Answer Stream)
 - `monologue.jsonl` (evidence frames, one per generated token)

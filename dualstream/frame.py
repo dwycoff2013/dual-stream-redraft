@@ -5,8 +5,6 @@ from typing import List, Optional, Dict, Any, Tuple
 import binascii
 import struct
 
-import numpy as np
-
 # Appendix C (v2.2 redraft): conceptual schema for MonologueFrameV1.
 # This module provides:
 # - a concrete dataclass representation
