@@ -34,39 +34,9 @@ class _FakeGenerator:
         }
 
 
-class _FakeGenerationConfig:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-
 class _FakeFinding:
     def __init__(self, label: str):
         self.label = label
-
-
-def _make_args(*, prompt=None, prompt_file=None, outdir="runs"):
-    return argparse.Namespace(
-        model="fake",
-        prompt=prompt,
-        prompt_file=prompt_file,
-        outdir=outdir,
-        max_new_tokens=4,
-        top_k=2,
-        temperature=1.0,
-        top_p=1.0,
-        greedy=False,
-        seed=None,
-        include_attn=False,
-        include_probes=False,
-        probe_pack=None,
-        no_heuristics=False,
-        no_crc32=False,
-        no_running_hash=False,
-        device=None,
-        offline=False,
-        cache_dir=None,
-    )
 
 
 def test_generate_requires_exactly_one_prompt_source():
@@ -89,67 +59,38 @@ def test_generate_requires_exactly_one_prompt_source():
     assert neither_exc.value.code == 2
 
 
-def test_generate_missing_prompt_file_exits_cleanly(tmp_path):
-    missing = tmp_path / "missing.txt"
-
-    with pytest.raises(SystemExit) as exc:
-        cli.cmd_generate(_make_args(prompt_file=str(missing), outdir=str(tmp_path / "runs")))
-
-    assert str(exc.value) == f"Prompt file not found: {missing}"
-
-
-def test_generate_empty_prompt_file_exits_cleanly(tmp_path):
-    prompt_file = tmp_path / "empty.txt"
-    prompt_file.write_text("", encoding="utf-8")
-
-    with pytest.raises(SystemExit) as exc:
-        cli.cmd_generate(_make_args(prompt_file=str(prompt_file), outdir=str(tmp_path / "runs")))
-
-    assert str(exc.value) == f"No non-empty prompts found in: {prompt_file}"
-
-
-def test_generate_whitespace_only_prompt_file_exits_cleanly(tmp_path):
-    prompt_file = tmp_path / "whitespace.txt"
-    prompt_file.write_text("\n  \n\t\n", encoding="utf-8")
-
-    with pytest.raises(SystemExit) as exc:
-        cli.cmd_generate(_make_args(prompt_file=str(prompt_file), outdir=str(tmp_path / "runs")))
-
-    assert str(exc.value) == f"No non-empty prompts found in: {prompt_file}"
-
-
-def test_generate_does_not_construct_generator_when_prompt_file_invalid(tmp_path, monkeypatch):
-    missing = tmp_path / "missing.txt"
-    seen = {"load_called": 0, "constructed": 0}
-
-    class _ShouldNotConstructGenerator:
-        def __init__(self, *_args, **_kwargs):
-            seen["constructed"] += 1
-
-    def _fake_load_generator_types():
-        seen["load_called"] += 1
-        return _ShouldNotConstructGenerator, _FakeGenerationConfig
-
-    monkeypatch.setattr(cli, "_load_generator_types", _fake_load_generator_types)
-
-    with pytest.raises(SystemExit) as exc:
-        cli.cmd_generate(_make_args(prompt_file=str(missing), outdir=str(tmp_path / "runs")))
-
-    assert str(exc.value) == f"Prompt file not found: {missing}"
-    assert seen["load_called"] == 0
-    assert seen["constructed"] == 0
-
-
 def test_generate_batch_writes_numbered_runs_and_manifest(tmp_path, monkeypatch):
     prompts = tmp_path / "prompts.txt"
     prompts.write_text("first\n\nsecond\n", encoding="utf-8")
     outdir = tmp_path / "runs"
 
-    monkeypatch.setattr(cli, "_load_generator_types", lambda: (_FakeGenerator, _FakeGenerationConfig))
+    monkeypatch.setattr(cli, "DualStreamGenerator", _FakeGenerator)
     monkeypatch.setattr(cli, "render_monologue_text", lambda _frames, tokenizer_decode: tokenizer_decode([0]))
     monkeypatch.setattr(cli, "coherence_audit", lambda *_args, **_kwargs: [_FakeFinding("ok")])
 
-    rc = cli.cmd_generate(_make_args(prompt_file=str(prompts), outdir=str(outdir)))
+    args = argparse.Namespace(
+        model="fake",
+        prompt=None,
+        prompt_file=str(prompts),
+        outdir=str(outdir),
+        max_new_tokens=4,
+        top_k=2,
+        temperature=1.0,
+        top_p=1.0,
+        greedy=False,
+        seed=None,
+        include_attn=False,
+        include_probes=False,
+        probe_pack=None,
+        no_heuristics=False,
+        no_crc32=False,
+        no_running_hash=False,
+        device=None,
+        offline=False,
+        cache_dir=None,
+    )
+
+    rc = cli.cmd_generate(args)
     assert rc == 0
 
     run1 = outdir / "0001"

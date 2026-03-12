@@ -39,6 +39,7 @@ def _load_prompt_file(path: str) -> list[str]:
 
 
 def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, str]:
+def _run_generation(gen: DualStreamGenerator, cfg: GenerationConfig, prompt: str, outdir: Path) -> dict[str, str]:
     outdir.mkdir(parents=True, exist_ok=True)
 
     result = gen.generate(prompt, cfg)
@@ -100,36 +101,29 @@ def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, 
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
-    cfg_kwargs = {
-        "model": args.model,
-        "max_new_tokens": args.max_new_tokens,
-        "top_k": args.top_k,
-        "temperature": args.temperature,
-        "top_p": args.top_p,
-        "do_sample": not args.greedy,
-        "seed": args.seed,
-        "include_attn": args.include_attn,
-        "include_probes": args.include_probes,
-        "probe_pack_path": args.probe_pack,
-        "enable_heuristics": not args.no_heuristics,
-        "include_crc32": not args.no_crc32,
-        "include_running_hash": not args.no_running_hash,
-        "device": args.device,
-        "local_files_only": args.offline,
-        "cache_dir": args.cache_dir,
-    }
-
-    if args.prompt is not None:
-        prompts = [args.prompt]
-    else:
-        prompts = _load_prompt_file(args.prompt_file)
+    cfg = GenerationConfig(
+        model=args.model,
+        max_new_tokens=args.max_new_tokens,
+        top_k=args.top_k,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        do_sample=not args.greedy,
+        seed=args.seed,
+        include_attn=args.include_attn,
+        include_probes=args.include_probes,
+        probe_pack_path=args.probe_pack,
+        enable_heuristics=not args.no_heuristics,
+        include_crc32=not args.no_crc32,
+        include_running_hash=not args.no_running_hash,
+        device=args.device,
+        local_files_only=args.offline,
+        cache_dir=args.cache_dir,
+    )
 
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    dualstream_generator, generation_config = _load_generator_types()
-    cfg = generation_config(**cfg_kwargs)
-    gen = dualstream_generator(
+    gen = DualStreamGenerator(
         cfg.model,
         device=cfg.device,
         local_files_only=cfg.local_files_only,
@@ -137,9 +131,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
     )
 
     if args.prompt is not None:
-        _run_generation(gen, cfg, prompts[0], outdir)
+        _run_generation(gen, cfg, args.prompt, outdir)
         return 0
 
+    prompts = [line for line in Path(args.prompt_file).read_text(encoding="utf-8").splitlines() if line.strip()]
     manifest_path = outdir / "manifest.jsonl"
     total = len(prompts)
 
