@@ -3,13 +3,42 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from .generator import DualStreamGenerator, GenerationConfig
-from .render import render_monologue_text
 from .audit import coherence_audit
+from .render import render_monologue_text
+
+if TYPE_CHECKING:
+    from .generator import DualStreamGenerator, GenerationConfig
 
 
-def _run_generation(gen: DualStreamGenerator, cfg: GenerationConfig, prompt: str, outdir: Path) -> dict[str, str]:
+def _load_generator_types() -> tuple[type[Any], type[Any]]:
+    from .generator import DualStreamGenerator, GenerationConfig
+
+    return DualStreamGenerator, GenerationConfig
+
+
+def _load_prompt_file(path: str) -> list[str]:
+    prompt_path = Path(path)
+
+    if not prompt_path.exists():
+        raise SystemExit(f"Prompt file not found: {prompt_path}")
+    if not prompt_path.is_file():
+        raise SystemExit(f"Prompt file is not a regular file: {prompt_path}")
+
+    try:
+        text = prompt_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SystemExit(f"Could not read prompt file {prompt_path}: {exc}") from exc
+
+    prompts = [line for line in text.splitlines() if line.strip()]
+    if not prompts:
+        raise SystemExit(f"No non-empty prompts found in: {prompt_path}")
+
+    return prompts
+
+
+def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, str]:
     outdir.mkdir(parents=True, exist_ok=True)
 
     result = gen.generate(prompt, cfg)
@@ -27,12 +56,10 @@ def _run_generation(gen: DualStreamGenerator, cfg: GenerationConfig, prompt: str
     answer_path.write_text(result["answer"], encoding="utf-8")
     monologue_path.write_text(monologue_text, encoding="utf-8")
 
-    # JSONL evidence frames
     with monologue_jsonl_path.open("w", encoding="utf-8") as f:
         for fr in frames:
             f.write(json.dumps(fr.to_dict(), ensure_ascii=False) + "\n")
 
-    # Raw binary stream (concatenated frames) for low-level consumers
     with monologue_bin_path.open("wb") as f:
         for fb in result["frame_bytes"]:
             f.write(fb)
@@ -55,8 +82,11 @@ def _run_generation(gen: DualStreamGenerator, cfg: GenerationConfig, prompt: str
     }
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-    # Optional coherence audit
-    findings = coherence_audit(result["answer"], frames, decode_token=lambda tid: gen.tokenizer.decode([tid]))
+    findings = coherence_audit(
+        result["answer"],
+        frames,
+        decode_token=lambda tid: gen.tokenizer.decode([tid]),
+    )
     audit_path.write_text(
         json.dumps([f.__dict__ for f in findings], indent=2),
         encoding="utf-8",
@@ -71,6 +101,12 @@ def _run_generation(gen: DualStreamGenerator, cfg: GenerationConfig, prompt: str
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
+    prompts: list[str] | None = None
+    if args.prompt is None:
+        prompts = _load_prompt_file(args.prompt_file)
+
+    DualStreamGenerator, GenerationConfig = _load_generator_types()
+
     cfg = GenerationConfig(
         model=args.model,
         max_new_tokens=args.max_new_tokens,
@@ -104,8 +140,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
         _run_generation(gen, cfg, args.prompt, outdir)
         return 0
 
-    prompts = [line for line in Path(args.prompt_file).read_text(encoding="utf-8").splitlines() if line.strip()]
     manifest_path = outdir / "manifest.jsonl"
+    assert prompts is not None
     total = len(prompts)
 
     with manifest_path.open("w", encoding="utf-8") as manifest:
@@ -130,17 +166,22 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="dualstream", description="Dual-Stream Architecture reference implementation")
+    p = argparse.ArgumentParser(
+        prog="dualstream",
+        description="Dual-Stream Architecture reference implementation",
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     g = sub.add_parser("generate", help="Generate answer + monologue evidence for a prompt")
     g.add_argument("--model", default="gpt2", help="HF model name or path")
+
     prompt_group = g.add_mutually_exclusive_group(required=True)
     prompt_group.add_argument("--prompt", help="User prompt")
     prompt_group.add_argument(
         "--prompt-file",
         help="UTF-8 text file with one prompt per non-empty line",
     )
+
     g.add_argument("--outdir", default=".", help="Output directory")
     g.add_argument("--max-new-tokens", type=int, default=128)
     g.add_argument("--top-k", type=int, default=5, help="Top-K evidence tokens per step (pre-sampling)")
