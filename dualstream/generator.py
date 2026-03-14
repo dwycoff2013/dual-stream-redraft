@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-import os
-import time
 import random
 import re
 
@@ -12,15 +10,9 @@ import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from .frame import MonologueFrameV1, TopKToken, AttnSummary, encode_frame
+from .frame import AttnSummary, MonologueFrameV1, TopKToken, encode_frame
 from .integrity import RunningHash
 from .probes import ProbePack, run_probes
-from .vocab import (
-    DEFAULT_CONCEPT_VOCAB,
-    CONCEPT_CONFIRMATION_REQUEST,
-    CONCEPT_FACTUALITY_CONCERN,
-    CONCEPT_POLICY_TENSION,
-)
 
 
 @dataclass
@@ -48,6 +40,8 @@ class GenerationConfig:
     include_running_hash: bool = True
 
     device: Optional[str] = None  # e.g. "cuda", "cpu"
+    local_files_only: bool = False
+    cache_dir: Optional[str] = None
 
 
 class DualStreamGenerator:
@@ -58,23 +52,91 @@ class DualStreamGenerator:
     pre-sampling top-K logits as required by the DSA contract.
     """
 
-    def __init__(self, model_name: str, *, device: Optional[str] = None):
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        device: Optional[str] = None,
+        local_files_only: bool = False,
+        cache_dir: Optional[str] = None,
+    ):
         self.model_name = model_name
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.local_files_only = local_files_only
+        self.cache_dir = cache_dir
 
-        # Check if model_name is a local directory
-        is_local = os.path.isdir(model_name)
-        if is_local:
-            print(f"DualStreamGenerator: Loading local model from '{model_name}'...")
-
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, local_files_only=is_local)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, local_files_only=is_local)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            use_fast=True,
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+        )
         self.model.to(self.device)
         self.model.eval()
 
         if self.tokenizer.pad_token_id is None and self.tokenizer.eos_token_id is not None:
             # Many causal LMs omit PAD; align to EOS for batching safety.
             self.tokenizer.pad_token = self.tokenizer.eos_token
+
+    def _render_prompt(self, prompt: str) -> str:
+        """
+        Render the prompt for instruction/chat models when a chat template is available.
+        Falls back to the raw prompt for plain causal LMs such as GPT-2.
+        """
+        if hasattr(self.tokenizer, "apply_chat_template"):
+            try:
+                return self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                pass
+        return prompt
+
+    def _get_stop_token_ids(self) -> set[int]:
+        """
+        Collect model-specific stop tokens. For chat/instruction models this often includes
+        EOS plus end-of-turn special tokens.
+        """
+        stop_ids: set[int] = set()
+
+        if self.tokenizer.eos_token_id is not None:
+            stop_ids.add(int(self.tokenizer.eos_token_id))
+
+        extra_ids = getattr(self.tokenizer, "additional_special_tokens_ids", None)
+        if extra_ids:
+            stop_ids.update(int(x) for x in extra_ids if x is not None)
+
+        # These should not act as generation stops.
+        if self.tokenizer.pad_token_id is not None:
+            stop_ids.discard(int(self.tokenizer.pad_token_id))
+        if getattr(self.tokenizer, "bos_token_id", None) is not None:
+            stop_ids.discard(int(self.tokenizer.bos_token_id))
+
+        return stop_ids
+
+    def _should_stop_on_token(self, token_id: int, stop_token_ids: set[int]) -> bool:
+        if token_id in stop_token_ids:
+            return True
+
+        # Extra text-level guard for models that emit end-of-turn markers in special-token text.
+        token_text = self.tokenizer.decode([token_id], skip_special_tokens=False).strip()
+        if token_text in {
+            "<end_of_turn>",
+            "<eot>",
+            "<eos>",
+            "<|eot_id|>",
+            "<|end_of_turn|>",
+        }:
+            return True
+
+        return False
 
     @staticmethod
     def _softmax(logits: torch.Tensor) -> torch.Tensor:
@@ -89,33 +151,43 @@ class DualStreamGenerator:
     def _apply_top_p(probs: torch.Tensor, top_p: float) -> torch.Tensor:
         if top_p >= 1.0:
             return probs
+
         sorted_probs, sorted_idx = torch.sort(probs, descending=True)
         cum = torch.cumsum(sorted_probs, dim=-1)
         mask = cum <= top_p
+
         # ensure at least 1 token
         if not torch.any(mask):
             mask[0] = True
+
         filtered = torch.zeros_like(probs)
         filtered[sorted_idx[mask]] = probs[sorted_idx[mask]]
         filtered = filtered / filtered.sum()
         return filtered
 
-    def _heuristic_concepts(self, prompt: str, topk_token_ids: List[int], topk_probs: List[float]) -> List[Tuple[int, float]]:
+    def _heuristic_concepts(
+        self,
+        prompt: str,
+        topk_token_ids: List[int],
+        topk_probs: List[float],
+    ) -> List[Tuple[int, float]]:
         """
         Extremely small heuristic fallback to demonstrate the pipeline and to mirror the paper's
         illustrative Appendix A monologue shape. This is NOT a claim of probe reliability.
         """
         hits: List[Tuple[int, float]] = []
 
+        prompt_lower = prompt.lower()
+
         # Confirmation request heuristic
-        if any(q in prompt.lower() for q in ["right?", "correct?", "isn't it", "is it true", "am i right"]):
-            hits.append((CONCEPT_CONFIRMATION_REQUEST, 0.83))
+        if any(q in prompt_lower for q in ["right?", "correct?", "isn't it", "is it true", "am i right"]):
+            hits.append((1001, 0.83))
 
         # Rough "factuality concern" heuristic: mark if prompt contains a strong claim form.
-        if re.search(r"\b(is|are|was|were)\b.*\b(correct|true|right)\b", prompt.lower()):
-            hits.append((CONCEPT_FACTUALITY_CONCERN, 0.72))
+        if re.search(r"\b(is|are|was|were)\b.*\b(correct|true|right)\b", prompt_lower):
+            hits.append((2001, 0.72))
 
-        # Tension heuristic: if topK includes strong affirmation tokens.
+        # Tension heuristic: if top-K includes strong affirmation tokens.
         try:
             toks = [self.tokenizer.decode([tid]).strip().lower() for tid in topk_token_ids]
             affirm_prob = 0.0
@@ -123,7 +195,7 @@ class DualStreamGenerator:
                 if t in {"yes", "absolutely", "correct", "right"}:
                     affirm_prob += float(p)
             if affirm_prob >= 0.10:
-                hits.append((CONCEPT_POLICY_TENSION, min(0.95, 0.50 + affirm_prob)))
+                hits.append((3001, min(0.95, 0.50 + affirm_prob)))
         except Exception:
             pass
 
@@ -144,8 +216,17 @@ class DualStreamGenerator:
         if cfg.include_probes and cfg.probe_pack_path:
             probe_pack = ProbePack.from_json(cfg.probe_pack_path)
 
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(device)
-        attention_mask = torch.ones_like(input_ids, device=device)
+        rendered_prompt = self._render_prompt(prompt)
+        model_inputs = self.tokenizer(rendered_prompt, return_tensors="pt")
+        input_ids = model_inputs["input_ids"].to(device)
+
+        attention_mask = model_inputs.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids, device=device)
+        else:
+            attention_mask = attention_mask.to(device)
+
+        stop_token_ids = self._get_stop_token_ids()
 
         generated_ids: List[int] = []
         frames: List[MonologueFrameV1] = []
@@ -174,7 +255,10 @@ class DualStreamGenerator:
                 top_probs, top_ids = torch.topk(probs_full, k=k)
                 top_ids_list = [int(x) for x in top_ids.tolist()]
                 top_probs_list = [float(x) for x in top_probs.tolist()]
-                topk_tokens = [TopKToken(token_id=tid, prob=p) for tid, p in zip(top_ids_list, top_probs_list)]
+                topk_tokens = [
+                    TopKToken(token_id=tid, prob=p)
+                    for tid, p in zip(top_ids_list, top_probs_list)
+                ]
 
                 # Sampling distribution (temperature + top_p)
                 if cfg.do_sample:
@@ -192,7 +276,6 @@ class DualStreamGenerator:
                     candidates: List[AttnSummary] = []
                     for layer_idx, att in enumerate(outputs.attentions):
                         a = att[0]  # [heads, tgt_len, src_len] (batch removed)
-                        # last query position
                         weights = a[:, -1, :]  # [heads, src_len]
                         top_w, top_idx = torch.max(weights, dim=-1)  # per head
                         for head_idx in range(weights.shape[0]):
@@ -218,9 +301,12 @@ class DualStreamGenerator:
                     concepts = run_probes(hs_np, probe_pack)
                 elif cfg.enable_heuristics:
                     hits = self._heuristic_concepts(prompt, top_ids_list, top_probs_list)
-                    # store as sparse ConceptScore list
                     from .frame import ConceptScore
-                    concepts = [ConceptScore(concept_id=cid, score=float(score)) for cid, score in hits]
+
+                    concepts = [
+                        ConceptScore(concept_id=cid, score=float(score))
+                        for cid, score in hits
+                    ]
 
                 frame = MonologueFrameV1(
                     prompt_nonce=prompt_nonce,
@@ -239,14 +325,23 @@ class DualStreamGenerator:
 
                 generated_ids.append(chosen_id)
 
-                # stop on EOS
-                if self.tokenizer.eos_token_id is not None and chosen_id == int(self.tokenizer.eos_token_id):
+                if self._should_stop_on_token(chosen_id, stop_token_ids):
                     break
 
-                # Next step: feed only the chosen token (cached KV handles history)
+                # Next step: feed only the chosen token (cached KV handles history),
+                # but keep the full accumulated attention mask length.
                 input_ids = torch.tensor([[chosen_id]], device=device, dtype=torch.long)
-                # Append to attention mask to maintain context history
-                attention_mask = torch.cat([attention_mask, torch.ones((1, 1), device=device, dtype=torch.long)], dim=1)
+                attention_mask = torch.cat(
+                    [
+                        attention_mask,
+                        torch.ones(
+                            (attention_mask.shape[0], 1),
+                            device=device,
+                            dtype=attention_mask.dtype,
+                        ),
+                    ],
+                    dim=1,
+                )
 
         answer_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
 
