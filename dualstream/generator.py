@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-import os
-import time
 import random
 import re
 
@@ -12,10 +10,9 @@ import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from .frame import MonologueFrameV1, TopKToken, AttnSummary, encode_frame
+from .frame import AttnSummary, MonologueFrameV1, TopKToken, encode_frame
 from .integrity import RunningHash
 from .probes import ProbePack, run_probes
-from .vocab import DEFAULT_CONCEPT_VOCAB
 
 
 @dataclass
@@ -86,6 +83,22 @@ class DualStreamGenerator:
             # Many causal LMs omit PAD; align to EOS for batching safety.
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+    def _render_prompt(self, prompt: str) -> str:
+        """
+        Render the prompt for instruction/chat models when a chat template is available.
+        Falls back to the raw prompt for plain causal LMs such as GPT-2.
+        """
+        if hasattr(self.tokenizer, "apply_chat_template"):
+            try:
+                return self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                pass
+        return prompt
+
     @staticmethod
     def _softmax(logits: torch.Tensor) -> torch.Tensor:
         return torch.softmax(logits, dim=-1)
@@ -102,30 +115,39 @@ class DualStreamGenerator:
         sorted_probs, sorted_idx = torch.sort(probs, descending=True)
         cum = torch.cumsum(sorted_probs, dim=-1)
         mask = cum <= top_p
+
         # ensure at least 1 token
         if not torch.any(mask):
             mask[0] = True
+
         filtered = torch.zeros_like(probs)
         filtered[sorted_idx[mask]] = probs[sorted_idx[mask]]
         filtered = filtered / filtered.sum()
         return filtered
 
-    def _heuristic_concepts(self, prompt: str, topk_token_ids: List[int], topk_probs: List[float]) -> List[Tuple[int, float]]:
+    def _heuristic_concepts(
+        self,
+        prompt: str,
+        topk_token_ids: List[int],
+        topk_probs: List[float],
+    ) -> List[Tuple[int, float]]:
         """
         Extremely small heuristic fallback to demonstrate the pipeline and to mirror the paper's
         illustrative Appendix A monologue shape. This is NOT a claim of probe reliability.
         """
         hits: List[Tuple[int, float]] = []
 
+        prompt_lower = prompt.lower()
+
         # Confirmation request heuristic
-        if any(q in prompt.lower() for q in ["right?", "correct?", "isn't it", "is it true", "am i right"]):
+        if any(q in prompt_lower for q in ["right?", "correct?", "isn't it", "is it true", "am i right"]):
             hits.append((1001, 0.83))
 
         # Rough "factuality concern" heuristic: mark if prompt contains a strong claim form.
-        if re_search := __import__("re").search(r"\b(is|are|was|were)\b.*\b(correct|true|right)\b", prompt.lower()):
+        if re.search(r"\b(is|are|was|were)\b.*\b(correct|true|right)\b", prompt_lower):
             hits.append((2001, 0.72))
 
-        # Tension heuristic: if topK includes strong affirmation tokens.
+        # Tension heuristic: if top-K includes strong affirmation tokens.
         try:
             toks = [self.tokenizer.decode([tid]).strip().lower() for tid in topk_token_ids]
             affirm_prob = 0.0
@@ -154,8 +176,15 @@ class DualStreamGenerator:
         if cfg.include_probes and cfg.probe_pack_path:
             probe_pack = ProbePack.from_json(cfg.probe_pack_path)
 
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(device)
-        attention_mask = torch.ones_like(input_ids, device=device)
+        rendered_prompt = self._render_prompt(prompt)
+        model_inputs = self.tokenizer(rendered_prompt, return_tensors="pt")
+        input_ids = model_inputs["input_ids"].to(device)
+
+        attention_mask = model_inputs.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids, device=device)
+        else:
+            attention_mask = attention_mask.to(device)
 
         generated_ids: List[int] = []
         frames: List[MonologueFrameV1] = []
@@ -184,7 +213,10 @@ class DualStreamGenerator:
                 top_probs, top_ids = torch.topk(probs_full, k=k)
                 top_ids_list = [int(x) for x in top_ids.tolist()]
                 top_probs_list = [float(x) for x in top_probs.tolist()]
-                topk_tokens = [TopKToken(token_id=tid, prob=p) for tid, p in zip(top_ids_list, top_probs_list)]
+                topk_tokens = [
+                    TopKToken(token_id=tid, prob=p)
+                    for tid, p in zip(top_ids_list, top_probs_list)
+                ]
 
                 # Sampling distribution (temperature + top_p)
                 if cfg.do_sample:
@@ -202,7 +234,6 @@ class DualStreamGenerator:
                     candidates: List[AttnSummary] = []
                     for layer_idx, att in enumerate(outputs.attentions):
                         a = att[0]  # [heads, tgt_len, src_len] (batch removed)
-                        # last query position
                         weights = a[:, -1, :]  # [heads, src_len]
                         top_w, top_idx = torch.max(weights, dim=-1)  # per head
                         for head_idx in range(weights.shape[0]):
@@ -228,9 +259,12 @@ class DualStreamGenerator:
                     concepts = run_probes(hs_np, probe_pack)
                 elif cfg.enable_heuristics:
                     hits = self._heuristic_concepts(prompt, top_ids_list, top_probs_list)
-                    # store as sparse ConceptScore list
                     from .frame import ConceptScore
-                    concepts = [ConceptScore(concept_id=cid, score=float(score)) for cid, score in hits]
+
+                    concepts = [
+                        ConceptScore(concept_id=cid, score=float(score))
+                        for cid, score in hits
+                    ]
 
                 frame = MonologueFrameV1(
                     prompt_nonce=prompt_nonce,
@@ -253,9 +287,20 @@ class DualStreamGenerator:
                 if self.tokenizer.eos_token_id is not None and chosen_id == int(self.tokenizer.eos_token_id):
                     break
 
-                # Next step: feed only the chosen token (cached KV handles history)
+                # Next step: feed only the chosen token (cached KV handles history),
+                # but keep the full accumulated attention mask length.
                 input_ids = torch.tensor([[chosen_id]], device=device, dtype=torch.long)
-                attention_mask = torch.ones_like(input_ids, device=device)
+                attention_mask = torch.cat(
+                    [
+                        attention_mask,
+                        torch.ones(
+                            (attention_mask.shape[0], 1),
+                            device=device,
+                            dtype=attention_mask.dtype,
+                        ),
+                    ],
+                    dim=1,
+                )
 
         answer_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
 
