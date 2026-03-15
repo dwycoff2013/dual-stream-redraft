@@ -99,6 +99,45 @@ class DualStreamGenerator:
                 pass
         return prompt
 
+    def _get_stop_token_ids(self) -> set[int]:
+        """
+        Collect model-specific stop tokens. For chat/instruction models this often includes
+        EOS plus end-of-turn special tokens.
+        """
+        stop_ids: set[int] = set()
+
+        if self.tokenizer.eos_token_id is not None:
+            stop_ids.add(int(self.tokenizer.eos_token_id))
+
+        extra_ids = getattr(self.tokenizer, "additional_special_tokens_ids", None)
+        if extra_ids:
+            stop_ids.update(int(x) for x in extra_ids if x is not None)
+
+        # These should not act as generation stops.
+        if self.tokenizer.pad_token_id is not None:
+            stop_ids.discard(int(self.tokenizer.pad_token_id))
+        if getattr(self.tokenizer, "bos_token_id", None) is not None:
+            stop_ids.discard(int(self.tokenizer.bos_token_id))
+
+        return stop_ids
+
+    def _should_stop_on_token(self, token_id: int, stop_token_ids: set[int]) -> bool:
+        if token_id in stop_token_ids:
+            return True
+
+        # Extra text-level guard for models that emit end-of-turn markers in special-token text.
+        token_text = self.tokenizer.decode([token_id], skip_special_tokens=False).strip()
+        if token_text in {
+            "<end_of_turn>",
+            "<eot>",
+            "<eos>",
+            "<|eot_id|>",
+            "<|end_of_turn|>",
+        }:
+            return True
+
+        return False
+
     @staticmethod
     def _softmax(logits: torch.Tensor) -> torch.Tensor:
         return torch.softmax(logits, dim=-1)
@@ -112,6 +151,7 @@ class DualStreamGenerator:
     def _apply_top_p(probs: torch.Tensor, top_p: float) -> torch.Tensor:
         if top_p >= 1.0:
             return probs
+
         sorted_probs, sorted_idx = torch.sort(probs, descending=True)
         cum = torch.cumsum(sorted_probs, dim=-1)
         mask = cum <= top_p
@@ -185,6 +225,8 @@ class DualStreamGenerator:
             attention_mask = torch.ones_like(input_ids, device=device)
         else:
             attention_mask = attention_mask.to(device)
+
+        stop_token_ids = self._get_stop_token_ids()
 
         generated_ids: List[int] = []
         frames: List[MonologueFrameV1] = []
@@ -283,8 +325,7 @@ class DualStreamGenerator:
 
                 generated_ids.append(chosen_id)
 
-                # stop on EOS
-                if self.tokenizer.eos_token_id is not None and chosen_id == int(self.tokenizer.eos_token_id):
+                if self._should_stop_on_token(chosen_id, stop_token_ids):
                     break
 
                 # Next step: feed only the chosen token (cached KV handles history),
