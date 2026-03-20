@@ -1,0 +1,56 @@
+benchmark:
+  name: arc_dsa_v0
+  description: ARC solver benchmark with DSA-style sidecar coherence auditing
+
+data:
+  source: arc_prize_or_kaggle_placeholder
+  split:
+    train_public: true
+    eval_public: true
+    private_competition: false
+
+solver:
+  mode: program_search
+  attempts_per_task: 2
+  emit_trace: true
+  emit_candidate_rankings: true
+
+dsa:
+  frame_schema: ArcDecisionFrameV1
+  require_one_frame_per_decision: true
+  require_topk_capture_pre_selection: true
+  require_integrity:
+    crc32: true
+    running_hash: true
+
+probe_pack:
+  path: eval/probe_pack_arc_v0.json
+  enabled: true
+  max_concepts: 16
+
+audits:
+  structural:
+    enabled: true
+  probabilistic:
+    enabled: true
+  concept:
+    enabled: true
+  cross_stream:
+    enabled: true
+
+metrics:
+  primary:
+    - task_accuracy
+  secondary:
+    - coherence_score
+    - integrity_pass_rate
+    - ambiguity_honesty_score
+    - attempt_diversity_score
+    - false_confidence_rate
+
+report:
+  write:
+    - submission.json
+    - trace.jsonl
+    - audit.json
+    - summary_metrics.json
