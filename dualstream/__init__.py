@@ -28,3 +28,21 @@ try:
 except Exception:
     # Allow importing codecs/render/audit without ML stack installed.
     pass
+
+
+# Optional ARC-DSA sidecar modules
+try:
+    from .arc_frame import ArcDecisionFrameV1, ArcConceptScore, HypothesisScore  # noqa: F401
+    from .arc_audit import ArcCoherenceFinding, arc_coherence_audit  # noqa: F401
+    from .arc_metrics import coherence_score  # noqa: F401
+
+    __all__ += [
+        "ArcDecisionFrameV1",
+        "ArcConceptScore",
+        "HypothesisScore",
+        "ArcCoherenceFinding",
+        "arc_coherence_audit",
+        "coherence_score",
+    ]
+except Exception:
+    pass
