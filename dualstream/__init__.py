@@ -46,21 +46,3 @@ try:
     ]
 except Exception:
     pass
-
-
-# Optional ARC baseline solver modules
-try:
-    from .arc_task import ArcTask, TrainPair, PredictionAttempt, load_task, load_tasks_from_dir  # noqa: F401
-    from .arc_solver import ArcSolver, SolverConfig  # noqa: F401
-
-    __all__ += [
-        "ArcTask",
-        "TrainPair",
-        "PredictionAttempt",
-        "load_task",
-        "load_tasks_from_dir",
-        "ArcSolver",
-        "SolverConfig",
-    ]
-except Exception:
-    pass

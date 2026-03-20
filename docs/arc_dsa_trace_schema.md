@@ -52,13 +52,3 @@ ARC audit checks include:
 - cross-stream checks (hash alignment, train-support label mismatch, finalize contradiction)
 
 These are intentionally lightweight and expected to be tuned by downstream evaluators.
-
-
-## Baseline solver integration
-
-The ARC baseline emits these `decision_type` events in order:
-- `hypothesis_select` (ranked candidate programs)
-- `candidate_render` (rendering selected program on each test input)
-- `attempt_finalize` (attempt 1 and attempt 2 finalization with output hashes)
-
-Integrity hooks (`crc32`, optional sequence running hash), coherence audit, and summary metrics are written as sidecar artifacts next to predictions/submission outputs.
