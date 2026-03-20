@@ -1,16 +1,11 @@
 # Dual-Stream Architecture (DSA) — reference implementation (software-only)
 
-This folder provides **working code** that matches the *v2.2 redraft* of the whitepaper:
-- **Per-token evidence frames** (`MonologueFrameV1`) with **chosen token id** and **pre-sampling top‑K**.
-- Optional **attention summaries** and **concept/probe outputs** (sparse).
-- A minimal **Coherence Audit** plus a **promptfoo** harness that consumes both streams.
+This repository now contains two complementary tracks:
 
-> Notes
-> - This is a **software-only** path intended for local / self-hosted transformer models (Hugging Face).
-> - The hardware-hardened egress (Appendix B) is represented here via integrity hooks (CRC + running hash),
->   but not as an FPGA/ASIC implementation.
+1. **Token-level DSA path** (LLM generation): per-token `MonologueFrameV1` evidence, codec/integrity hooks, coherence audit.
+2. **ARC baseline path** (offline heuristic solver): interpretable ARC program search with ARC-DSA sidecar tracing/auditing.
 
-## Quickstart (CLI)
+## Token-level DSA quickstart
 
 ```bash
 python -m pip install -r requirements.txt
@@ -21,81 +16,76 @@ python -m dualstream.cli generate \
   --outdir runs/single \
   --max-new-tokens 64 \
   --top-k 5
-
-python -m dualstream.cli generate \
-  --model models/gemma-3-1b-it \
-  --prompt-file eval/prompts/pilot_20_all.txt \
-  --outdir runs/pilot_20
 ```
 
-### Offline usage (download once, run locally)
+Outputs include `answer.txt`, `monologue.jsonl`, `monologue.txt`, and audit/meta artifacts.
+
+## ARC baseline solver quickstart
+
+### Solve a single task
 
 ```bash
-python -m pip install -r requirements.txt
-
-# Download a model snapshot for offline use (default: gpt2).
-python scripts/download_model.py --model gpt2 --local-dir ./models/gpt2
-
-# Optional: Gemma 3 1B (requires HF auth + gated access).
-# python scripts/download_model.py --model google/gemma-3-1b-it --local-dir ./models/gemma-3-1b-it
-
-# Run entirely offline using local files only.
-python -m dualstream.cli generate \
-  --model ./models/gpt2 \
-  --prompt "My theory that plants grow better with soda is correct, right?" \
-  --max-new-tokens 64 \
-  --top-k 5 \
-  --offline
+python -m dualstream.cli solve-task \
+  --task /path/to/task.json \
+  --outdir runs/arc/task_001 \
+  --emit-candidate-rankings
 ```
 
-You will get:
-- `answer.txt` (Answer Stream)
-- `monologue.jsonl` (evidence frames, one per generated token)
-- `monologue.txt` (human-readable monologue rendering)
-
-## Quickstart (promptfoo)
+### Solve a dataset directory
 
 ```bash
-npm i -g promptfoo
-python -m pip install -r requirements.txt
-
-# from repo root
-promptfoo eval -c eval/promptfooconfig.yaml
+python -m dualstream.cli solve-dataset \
+  --tasks-dir /path/to/tasks \
+  --outdir runs/arc/dataset \
+  --emit-candidate-rankings
 ```
 
-The config uses a **Python provider** that returns:
+### Kaggle-compatible submission only
+
+```bash
+python -m dualstream.cli kaggle-submit \
+  --tasks-dir /path/to/tasks \
+  --output runs/arc/submission.json
+```
+
+Submission shape:
+
 ```json
-{ "answer": "...", "monologue": "..." }
+{
+  "task_id": [
+    {"attempt_1": [[...]], "attempt_2": [[...]]}
+  ]
+}
 ```
 
-and a JavaScript assertion that checks coherence across both streams.
+Each test input gets exactly two attempts.
 
-## What matches the paper (v2.2 redraft)
+## ARC-DSA sidecar artifacts
 
-- Evidence frame conceptual schema (Appendix C): `dualstream/frame.py`
-- Evidence emission wrapper (software-only deployment pattern, Section 8.1): `dualstream/generator.py`
-- Coherence Audit (Section 5): `dualstream/audit.py`
-- promptfoo integration (Appendix A): `eval/`
+Per-task ARC outputs may include:
+- `predictions.json`
+- `trace.jsonl`
+- `audit.json`
+- `summary_metrics.json`
+- `candidate_rankings.json` (optional)
 
-## File layout
+The ARC path reuses sidecar schema/audit/metrics modules:
+- `dualstream/arc_frame.py`
+- `dualstream/arc_audit.py`
+- `dualstream/arc_metrics.py`
 
-- `dualstream/` — library
-- `eval/` — promptfoo provider + assertion + sample config
-- `examples/` — simple script usage
-- `tests/` — codec + integrity tests
+## Heuristic vs probe-backed
+
+- ARC baseline program search/ranking is **heuristic** and interpretable.
+- ARC concept signals in traces are **heuristic sidecar signals**, not calibrated learned probes.
+- Token-level probe-pack support still exists for LLM generation (`eval/probe_pack_template_gpt2.json`).
+
+## Docs
+
+- `docs/arc_dsa_trace_schema.md`
+- `docs/arc_solver.md`
+- `docs/kaggle_submission.md`
 
 ## License
 
-MIT 
-
-## Probe packs
-
-A valid template probe pack for GPT‑2 is included at:
-- `eval/probe_pack_template_gpt2.json`
-
-Enable probes with:
-```bash
-python -m dualstream.cli generate --include-probes --probe-pack eval/probe_pack_template_gpt2.json --model gpt2 --prompt "..."
-```
-
-The template does not trigger any concepts; it exists to show the expected shape and plumbing.
+MIT

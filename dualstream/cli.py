@@ -6,16 +6,36 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .audit import coherence_audit
+from .arc_solver import ArcSolver, SolverConfig, write_submission, write_task_artifacts
+from .arc_task import load_task, load_tasks_from_dir
 from .render import render_monologue_text
 
 if TYPE_CHECKING:
     from .generator import DualStreamGenerator, GenerationConfig
 
+# Test-time monkeypatch hooks (keeps generate path behavior unchanged)
+DualStreamGenerator: Any = None
+GenerationConfig: Any = None
+
 
 def _load_generator_types() -> tuple[type[Any], type[Any]]:
-    from .generator import DualStreamGenerator, GenerationConfig
+    global DualStreamGenerator, GenerationConfig
+    if DualStreamGenerator is not None and GenerationConfig is not None:
+        return DualStreamGenerator, GenerationConfig
+    if DualStreamGenerator is not None and GenerationConfig is None:
+        class _ShimGenerationConfig:
+            def __init__(self, **kwargs: Any):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
 
-    return DualStreamGenerator, GenerationConfig
+        GenerationConfig = _ShimGenerationConfig
+        return DualStreamGenerator, _ShimGenerationConfig
+
+    from .generator import DualStreamGenerator as _DualStreamGenerator, GenerationConfig as _GenerationConfig
+
+    DualStreamGenerator = _DualStreamGenerator
+    GenerationConfig = _GenerationConfig
+    return _DualStreamGenerator, _GenerationConfig
 
 
 def _load_prompt_file(path: str) -> list[str]:
@@ -105,9 +125,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
     if args.prompt is None:
         prompts = _load_prompt_file(args.prompt_file)
 
-    DualStreamGenerator, GenerationConfig = _load_generator_types()
+    DualStreamGeneratorCls, GenerationConfigCls = _load_generator_types()
 
-    cfg = GenerationConfig(
+    cfg = GenerationConfigCls(
         model=args.model,
         max_new_tokens=args.max_new_tokens,
         top_k=args.top_k,
@@ -129,7 +149,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    gen = DualStreamGenerator(
+    gen = DualStreamGeneratorCls(
         cfg.model,
         device=cfg.device,
         local_files_only=cfg.local_files_only,
@@ -162,6 +182,59 @@ def cmd_generate(args: argparse.Namespace) -> int:
             manifest.write(json.dumps(row, ensure_ascii=False) + "\n")
             print(f"[{index}/{total}] wrote {Path(args.outdir) / run_dir_name}")
 
+    return 0
+
+
+def _build_solver_config(args: argparse.Namespace) -> SolverConfig:
+    return SolverConfig(
+        max_program_depth=args.max_program_depth,
+        max_candidates=args.max_candidates,
+        beam_width=args.beam_width,
+        diversity_penalty=args.diversity_penalty,
+        emit_trace=not args.no_trace,
+        require_integrity=not args.no_integrity,
+        write_candidate_rankings=args.emit_candidate_rankings,
+    )
+
+
+def cmd_solve_task(args: argparse.Namespace) -> int:
+    task = load_task(args.task)
+    solver = ArcSolver(_build_solver_config(args))
+    result = solver.solve_task(task)
+
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    write_task_artifacts(result, outdir, include_rankings=args.emit_candidate_rankings)
+    write_submission([result], outdir / "submission.json")
+    return 0
+
+
+def cmd_solve_dataset(args: argparse.Namespace) -> int:
+    tasks = load_tasks_from_dir(args.tasks_dir)
+    solver = ArcSolver(_build_solver_config(args))
+
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    for task in tasks:
+        result = solver.solve_task(task)
+        results.append(result)
+        write_task_artifacts(
+            result,
+            outdir / task.task_id,
+            include_rankings=args.emit_candidate_rankings,
+        )
+
+    write_submission(results, outdir / "submission.json")
+    return 0
+
+
+def cmd_kaggle_submit(args: argparse.Namespace) -> int:
+    tasks = load_tasks_from_dir(args.tasks_dir)
+    solver = ArcSolver(_build_solver_config(args))
+    results = [solver.solve_task(task) for task in tasks]
+    write_submission(results, args.output)
     return 0
 
 
@@ -200,8 +273,35 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--device", default=None, help="Override device, e.g. cpu/cuda")
     g.add_argument("--offline", action="store_true", help="Use local HF cache only (no network)")
     g.add_argument("--cache-dir", default=None, help="Override HF cache directory")
-
     g.set_defaults(func=cmd_generate)
+
+    def add_solver_flags(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--max-program-depth", type=int, default=2)
+        parser.add_argument("--max-candidates", type=int, default=128)
+        parser.add_argument("--beam-width", type=int, default=24)
+        parser.add_argument("--diversity-penalty", type=float, default=0.10)
+        parser.add_argument("--no-trace", action="store_true")
+        parser.add_argument("--no-integrity", action="store_true")
+        parser.add_argument("--emit-candidate-rankings", action="store_true")
+
+    st = sub.add_parser("solve-task", help="Solve a single ARC task JSON and emit sidecar artifacts")
+    st.add_argument("--task", required=True, help="Path to ARC task JSON file")
+    st.add_argument("--outdir", required=True, help="Output directory")
+    add_solver_flags(st)
+    st.set_defaults(func=cmd_solve_task)
+
+    sd = sub.add_parser("solve-dataset", help="Solve all ARC tasks in a directory and emit submission + artifacts")
+    sd.add_argument("--tasks-dir", required=True, help="Directory containing ARC task JSON files")
+    sd.add_argument("--outdir", required=True, help="Output directory")
+    add_solver_flags(sd)
+    sd.set_defaults(func=cmd_solve_dataset)
+
+    ks = sub.add_parser("kaggle-submit", help="Build Kaggle-compatible submission.json from a task directory")
+    ks.add_argument("--tasks-dir", required=True, help="Directory containing ARC task JSON files")
+    ks.add_argument("--output", required=True, help="Path to submission.json")
+    add_solver_flags(ks)
+    ks.set_defaults(func=cmd_kaggle_submit)
+
     return p
 
 
