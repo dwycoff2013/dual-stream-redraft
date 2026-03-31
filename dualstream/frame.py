@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any
 import binascii
 import struct
 
@@ -55,6 +55,12 @@ class MonologueFrameV1:
 
     attn: List[AttnSummary] = field(default_factory=list)
     concepts: List[ConceptScore] = field(default_factory=list)
+    signal_schema_id: Optional[str] = None
+    signal_schema_hash: Optional[str] = None
+    probe_pack_id: Optional[str] = None
+    probe_pack_hash: Optional[str] = None
+    capture_stage: Optional[str] = None
+    decode_controls_applied: Optional[List[str]] = None
 
     crc32: Optional[int] = None  # optional in the paper
 
@@ -79,6 +85,12 @@ class MonologueFrameV1:
                 for a in self.attn
             ],
             "concepts": [{"concept_id": int(c.concept_id), "score": float(c.score)} for c in self.concepts],
+            "signal_schema_id": self.signal_schema_id,
+            "signal_schema_hash": self.signal_schema_hash,
+            "probe_pack_id": self.probe_pack_id,
+            "probe_pack_hash": self.probe_pack_hash,
+            "capture_stage": self.capture_stage,
+            "decode_controls_applied": self.decode_controls_applied,
             "crc32": None if self.crc32 is None else int(self.crc32),
         }
 
