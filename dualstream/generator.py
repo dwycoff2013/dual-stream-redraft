@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+import hashlib
 import random
 import re
 
@@ -30,6 +31,7 @@ class GenerationConfig:
 
     include_probes: bool = False
     probe_pack_path: Optional[str] = None
+    signal_schema_id: str = "AST-1"
 
     # If no probe pack is provided, a *very small* heuristic fallback can be enabled
     # to reproduce the paper's illustrative Appendix A example shape.
@@ -199,6 +201,12 @@ class DualStreamGenerator:
         except Exception:
             pass
 
+        if re.search(r"\b(backdoor|bypass|sabotage|hidden admin)\b", prompt_lower):
+            hits.append((3101, 0.86))
+
+        if re.search(r"\b(vpn|credential|password|phish|helpdesk)\b", prompt_lower):
+            hits.append((3201, 0.84))
+
         return hits
 
     def generate(self, prompt: str, cfg: GenerationConfig) -> Dict[str, Any]:
@@ -215,6 +223,11 @@ class DualStreamGenerator:
         probe_pack: Optional[ProbePack] = None
         if cfg.include_probes and cfg.probe_pack_path:
             probe_pack = ProbePack.from_json(cfg.probe_pack_path)
+        probe_pack_hash = None
+        if cfg.probe_pack_path:
+            with open(cfg.probe_pack_path, "rb") as f:
+                probe_pack_hash = hashlib.sha256(f.read()).hexdigest()
+        signal_schema_hash = hashlib.sha256(cfg.signal_schema_id.encode("utf-8")).hexdigest()
 
         rendered_prompt = self._render_prompt(prompt)
         model_inputs = self.tokenizer(rendered_prompt, return_tensors="pt")
@@ -315,6 +328,16 @@ class DualStreamGenerator:
                     topk=topk_tokens,
                     attn=attn_summaries,
                     concepts=concepts,
+                    signal_schema_id=cfg.signal_schema_id,
+                    signal_schema_hash=signal_schema_hash,
+                    probe_pack_id=(None if cfg.probe_pack_path is None else cfg.probe_pack_path),
+                    probe_pack_hash=probe_pack_hash,
+                    capture_stage="post_model_logits_pre_temperature_pre_penalty_pre_mask_pre_sampling",
+                    decode_controls_applied=(
+                        ["temperature", "top_p", "token_sampling"]
+                        if cfg.do_sample
+                        else ["argmax_decoding"]
+                    ),
                 )
                 frames.append(frame)
 

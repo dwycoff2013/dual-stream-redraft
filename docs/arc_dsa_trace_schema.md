@@ -12,6 +12,9 @@ It differs from token-level DSA in this repository:
 - ARC-DSA is for traceability, diagnostics, and benchmark-style coherence checks.
 - Concept probes are optional and probabilistic.
 - Coherence findings do not prove correctness.
+- ARC-DSA aligns to the repository assurance split:
+  - **DSA-R**: software-only trace/debug mode.
+  - **DSA-P**: production-assurance path requiring device-bound attestation (outside this ARC baseline harness).
 
 ## `ArcDecisionFrameV1`
 
@@ -42,6 +45,15 @@ Fields:
 ## Probe pack plumbing
 
 `eval/probe_pack_arc_v0.json` is a template vocabulary for ARC-oriented concepts/rules/conflicts/states. It is intentionally scaffold-level and should be replaced/tuned for production.
+
+## AST-1 and frame metadata compatibility
+
+Token-level `MonologueFrameV1` includes additive optional metadata for schema/probe/capture provenance:
+- `signal_schema_id`, `signal_schema_hash`
+- `probe_pack_id`, `probe_pack_hash`
+- `capture_stage`, `decode_controls_applied`
+
+These fields are additive and do not break existing frame consumers.
 
 ## Coherence checks (initial scaffold)
 
