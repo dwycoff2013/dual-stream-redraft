@@ -221,10 +221,11 @@ class DualStreamGenerator:
         prompt_nonce = random.getrandbits(64)
 
         probe_pack: Optional[ProbePack] = None
+        probe_pack_id: Optional[str] = None
+        probe_pack_hash: Optional[str] = None
         if cfg.include_probes and cfg.probe_pack_path:
             probe_pack = ProbePack.from_json(cfg.probe_pack_path)
-        probe_pack_hash = None
-        if cfg.probe_pack_path:
+            probe_pack_id = cfg.probe_pack_path
             with open(cfg.probe_pack_path, "rb") as f:
                 probe_pack_hash = hashlib.sha256(f.read()).hexdigest()
         signal_schema_hash = hashlib.sha256(cfg.signal_schema_id.encode("utf-8")).hexdigest()
@@ -330,7 +331,7 @@ class DualStreamGenerator:
                     concepts=concepts,
                     signal_schema_id=cfg.signal_schema_id,
                     signal_schema_hash=signal_schema_hash,
-                    probe_pack_id=(None if cfg.probe_pack_path is None else cfg.probe_pack_path),
+                    probe_pack_id=probe_pack_id,
                     probe_pack_hash=probe_pack_hash,
                     capture_stage="post_model_logits_pre_temperature_pre_penalty_pre_mask_pre_sampling",
                     decode_controls_applied=(
