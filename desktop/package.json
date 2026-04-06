@@ -1,0 +1,41 @@
+{
+  "name": "dualstream-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\" \"npm:dev:python\"",
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on tcp:5173 && tsc -p tsconfig.electron.json && electron .",
+    "dev:python": "python -m uvicorn dualstream.api:app --host 127.0.0.1 --port 8765",
+    "build": "vite build && tsc -p tsconfig.electron.json",
+    "package": "npm run build && electron-builder",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-split-pane": "^0.1.92"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/react": "^18.3.19",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.2.0",
+    "electron": "^35.1.5",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.8.3",
+    "vite": "^5.4.18",
+    "vitest": "^2.1.9",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.dualstream.desktop",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ]
+  }
+}
