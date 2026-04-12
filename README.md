@@ -111,82 +111,35 @@ Per-task ARC outputs may include:
 
 MIT
 
-## Desktop GUI (Electron + React + FastAPI bridge)
+## Browser GUI (FastAPI + vanilla HTML/CSS/JS)
 
-A desktop app is available under `desktop/` with a local Python API bridge in `dualstream/api.py` and `dualstream/service.py`.
+The GUI is now browser-first and served directly by FastAPI on the same origin as the API.
 
-### Architecture
-
-- **Renderer:** React + TypeScript UI (`desktop/src/`)
-- **Desktop shell:** Electron (`desktop/electron/`)
-- **Bridge API:** FastAPI (`dualstream/api.py`)
-- **Job orchestration:** threaded service wrapping existing generator/ARC solver paths (`dualstream/service.py`)
-- **Artifact normalization:** reusable parsing utilities (`dualstream/artifacts.py`)
-
-The bridge calls existing project modules directly:
-- Generation: `DualStreamGenerator`, `GenerationConfig`, and CLI-aligned `_run_generation` helper.
-- ARC solve: `ArcSolver`, `SolverConfig`, `write_task_artifacts`, and `write_submission`.
-
-### API endpoints used by desktop
-
-- `POST /generate`
-- `POST /arc/solve-task`
-- `POST /arc/solve-dataset`
-- `POST /arc/kaggle-submit`
-- `GET /jobs`
-- `GET /jobs/{id}`
-- `POST /jobs/{id}/cancel`
-- `GET /artifacts/{job_id}`
-- `GET /artifacts/{job_id}/file/{name}`
-
-### Prerequisites
-
-- Python 3.9+
-- Node.js 20+
-- npm
-
-### Install
+### Run
 
 ```bash
 python -m pip install -r requirements.txt
-cd desktop
-npm install
+python -m uvicorn dualstream.api:app --host 127.0.0.1 --port 8765
 ```
 
-### Run in development
+Then open `http://127.0.0.1:8765/`.
 
-From one terminal:
+### Architecture
 
-```bash
-cd desktop
-npm run dev
-```
+- **Backend API + UI server:** `dualstream/api.py`
+- **Job orchestration:** `dualstream/service.py`
+- **Browser assets:** `dualstream/web/index.html`, `dualstream/web/styles.css`, `dualstream/web/app.js`, `dualstream/web/api-client.js`
 
-This launches:
-- Vite renderer on `http://127.0.0.1:5173`
-- Electron desktop shell
-- FastAPI bridge on `http://127.0.0.1:8765`
+No Electron, React, Vite, TypeScript, or Node runtime is required for normal GUI usage.
 
-### Production build/package
+### Browser UI workflow coverage
 
-```bash
-cd desktop
-npm run package
-```
-
-### GUI workflow coverage
-
-The tabs map to existing CLI workflow families:
+The UI supports:
 1. Generate
 2. ARC Solve Task
 3. ARC Solve Dataset
 4. Kaggle Submit
-5. Artifacts/Logs viewer
+5. Job status/history and artifact browsing
 
-The UI includes:
-- a restrained dark theme
-- resizable split pane (forms/results)
-- status stepper and progress text
-- expandable JSON viewers with copy actions
-- frame explorer with search + slider
-- artifact table with open links
+All frontend API calls use same-origin relative routes (`/generate`, `/jobs`, `/artifacts/...`).
+
