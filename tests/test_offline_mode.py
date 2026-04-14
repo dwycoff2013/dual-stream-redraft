@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import sys
+import types
 
-from dualstream.offline import enforce_offline_env
+from dualstream.offline import enforce_offline_env, preflight_model_assets
 from dualstream.service import DualStreamService
 
 
@@ -58,7 +60,7 @@ def test_start_generate_forces_local_files_only_in_offline_mode(monkeypatch, tmp
     class DummyGenerator:
         def __init__(self, _model, *, local_files_only=False, **_kwargs):
             observed["local_files_only"] = bool(local_files_only)
-            observed["hf_hub_offline"] = os.environ.get("HF_HUB_OFFLINE") == "1"
+            observed["hf_hub_offline"] = os.environ.get("HF_HUB_OFFLINE")
             self.tokenizer = type("Tok", (), {"decode": staticmethod(lambda _ids: "tok")})()
 
         def generate(self, _prompt, _cfg):
@@ -98,40 +100,37 @@ def test_start_generate_forces_local_files_only_in_offline_mode(monkeypatch, tmp
         time.sleep(0.01)
 
     assert observed["local_files_only"] is True
-    assert observed["hf_hub_offline"] is True
+    assert observed["hf_hub_offline"] is None
     assert observed["hf_hub_offline_during_generate"] is False
 
 
-def test_enforce_offline_env_sets_expected_variables() -> None:
+def test_enforce_offline_env_does_not_mutate_process_environment() -> None:
+    os.environ.pop("HF_HUB_OFFLINE", None)
+    os.environ.pop("TRANSFORMERS_OFFLINE", None)
     with enforce_offline_env(True):
-        assert os.environ["HF_HUB_OFFLINE"] == "1"
-        assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
+        assert os.environ.get("HF_HUB_OFFLINE") is None
+        assert os.environ.get("TRANSFORMERS_OFFLINE") is None
 
 
-def test_enforce_offline_env_serializes_contexts_across_modes() -> None:
-    import threading
-    import time
+def test_offline_preflight_treats_cached_no_exist_sentinel_as_missing(monkeypatch) -> None:
+    sentinel = object()
 
-    order: list[str] = []
-    entered = threading.Event()
+    hub_module = types.ModuleType("huggingface_hub")
+    file_download_module = types.ModuleType("huggingface_hub.file_download")
+    file_download_module._CACHED_NO_EXIST = sentinel
 
-    def offline_worker() -> None:
-        with enforce_offline_env(True):
-            order.append("offline-enter")
-            entered.set()
-            time.sleep(0.05)
-            order.append("offline-exit")
+    def fake_try_to_load_from_cache(_model, filename, cache_dir=None):
+        del cache_dir
+        if filename == "config.json":
+            return sentinel
+        return "/tmp/fake-cache-hit"
 
-    def online_worker() -> None:
-        entered.wait(timeout=1)
-        with enforce_offline_env(False):
-            order.append("online-enter")
+    hub_module.try_to_load_from_cache = fake_try_to_load_from_cache
 
-    t1 = threading.Thread(target=offline_worker)
-    t2 = threading.Thread(target=online_worker)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub_module)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.file_download", file_download_module)
 
-    assert order == ["offline-enter", "offline-exit", "online-enter"]
+    result = preflight_model_assets("org/model", offline=True)
+
+    assert result["ok"] is False
+    assert any("config.json" in error for error in result["errors"])

@@ -1,19 +1,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import os
 from pathlib import Path
-import threading
 from typing import Any
-
-
-OFFLINE_ENV_VARS = {
-    "HF_HUB_OFFLINE": "1",
-    "TRANSFORMERS_OFFLINE": "1",
-}
-
-_OFFLINE_ENV_LOCK = threading.RLock()
-
 
 def _is_local_model_path(model: str) -> Path | None:
     candidate = Path(model).expanduser()
@@ -50,6 +39,7 @@ def _check_local_model_dir(model_dir: Path) -> list[str]:
 def _check_cached_model(model: str, cache_dir: str | None) -> list[str]:
     try:
         from huggingface_hub import try_to_load_from_cache
+        from huggingface_hub.file_download import _CACHED_NO_EXIST
     except Exception:
         return [
             "huggingface_hub is required to validate cached models. Install dependencies and retry."
@@ -57,7 +47,8 @@ def _check_cached_model(model: str, cache_dir: str | None) -> list[str]:
 
     def _exists(filename: str) -> bool:
         try:
-            return try_to_load_from_cache(model, filename, cache_dir=cache_dir) is not None
+            cached = try_to_load_from_cache(model, filename, cache_dir=cache_dir)
+            return cached is not None and cached is not _CACHED_NO_EXIST
         except Exception:
             return False
 
@@ -111,19 +102,13 @@ def preflight_model_assets(model: str, offline: bool, cache_dir: str | None = No
 
 @contextmanager
 def enforce_offline_env(enabled: bool):
-    with _OFFLINE_ENV_LOCK:
-        if not enabled:
-            yield
-            return
+    """
+    Keep API compatibility without mutating process-global environment state.
 
-        previous = {k: os.environ.get(k) for k in OFFLINE_ENV_VARS}
-        try:
-            for key, value in OFFLINE_ENV_VARS.items():
-                os.environ[key] = value
-            yield
-        finally:
-            for key, value in previous.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+    Generation already enforces offline behavior via explicit `local_files_only=True`
+    arguments passed to Transformers/Hugging Face loaders. Toggling `os.environ`
+    in a multi-threaded service can create cross-job races because environment
+    variables are process-wide, not request-scoped.
+    """
+    del enabled
+    yield
