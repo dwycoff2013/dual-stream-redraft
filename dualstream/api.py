@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -10,6 +11,9 @@ from fastapi.staticfiles import StaticFiles
 from .service import DualStreamService
 
 app = FastAPI(title="DualStream Local API", version="0.2.0")
+WEB_DIR = Path(__file__).resolve().parent / "web"
+
+app = FastAPI(title="DualStream Browser API", version="0.2.0")
 service = DualStreamService()
 WEB_ROOT = Path(__file__).resolve().parent / "web"
 
@@ -20,6 +24,13 @@ if WEB_ROOT.exists():
 @app.get("/")
 def root() -> FileResponse:
     return FileResponse(WEB_ROOT / "index.html")
+
+app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+
+
+@app.get("/")
+def root() -> FileResponse:
+    return FileResponse(WEB_DIR / "index.html")
 
 
 @app.get("/health")
@@ -102,7 +113,11 @@ def get_artifacts(job_id: str) -> list[dict]:
         return []
     from .artifacts import discover_artifacts
 
-    return discover_artifacts(job.output_dir)
+    artifacts = discover_artifacts(job.output_dir)
+    for artifact in artifacts:
+        rel_path = quote(str(artifact["relative_path"]))
+        artifact["url"] = f"/artifacts/{job_id}/file/{rel_path}"
+    return artifacts
 
 
 @app.get("/artifacts/{job_id}/file/{artifact_path:path}")

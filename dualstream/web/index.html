@@ -33,5 +33,103 @@
       <pre id="status"></pre>
     </main>
     <script src="/static/app.js"></script>
+    <title>DualStream Browser UI</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>DualStream</h1>
+      <p class="subtle">Simple browser UI for generation and ARC workflows</p>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <h2>Run Job</h2>
+        <nav class="tabs" aria-label="Job workflow tabs">
+          <button class="tab active" data-tab="generate">Generate</button>
+          <button class="tab" data-tab="solve-task">ARC Solve Task</button>
+          <button class="tab" data-tab="solve-dataset">ARC Solve Dataset</button>
+          <button class="tab" data-tab="kaggle-submit">Kaggle Submit</button>
+        </nav>
+
+        <div id="error-banner" class="banner hidden" role="alert"></div>
+        <div id="status-banner" class="status" aria-live="polite">Ready.</div>
+
+        <form id="job-form" class="stack" novalidate>
+          <fieldset>
+            <legend>Common</legend>
+            <label for="outdir">Output directory</label>
+            <input id="outdir" name="outdir" value="runs/browser" />
+          </fieldset>
+
+          <fieldset data-section="generate">
+            <legend>Generate</legend>
+            <label for="prompt">Prompt</label>
+            <textarea id="prompt" name="prompt" rows="5"></textarea>
+            <label for="model">Model</label>
+            <input id="model" name="model" value="gpt2" />
+            <label for="max_new_tokens">Max new tokens</label>
+            <input id="max_new_tokens" name="max_new_tokens" type="number" value="128" min="1" />
+          </fieldset>
+
+          <fieldset data-section="solve-task" class="hidden">
+            <legend>ARC Solve Task</legend>
+            <label for="task">Task file path</label>
+            <input id="task" name="task" placeholder="/path/to/task.json" />
+          </fieldset>
+
+          <fieldset data-section="solve-dataset" class="hidden">
+            <legend>ARC Solve Dataset</legend>
+            <label for="tasks_dir">Tasks directory</label>
+            <input id="tasks_dir" name="tasks_dir" placeholder="/path/to/tasks" />
+          </fieldset>
+
+          <fieldset data-section="kaggle-submit" class="hidden">
+            <legend>Kaggle Submit</legend>
+            <label for="kaggle_tasks_dir">Tasks directory</label>
+            <input id="kaggle_tasks_dir" name="kaggle_tasks_dir" placeholder="/path/to/tasks" />
+            <label for="output">Submission output file</label>
+            <input id="output" name="output" value="runs/browser/submission.json" />
+          </fieldset>
+
+          <div class="actions">
+            <button id="submit-btn" type="submit">Start Job</button>
+            <button id="refresh-btn" type="button">Refresh Jobs</button>
+            <button id="cancel-btn" type="button" disabled>Cancel Selected Job</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Jobs</h2>
+        <p>Selected job: <strong id="selected-job">None</strong></p>
+        <div id="job-meta" class="subtle">No job selected.</div>
+        <ul id="jobs-list" class="jobs"></ul>
+      </section>
+
+      <section class="panel wide">
+        <h2>Job Output</h2>
+        <details>
+          <summary>Result JSON</summary>
+          <pre id="result-json">{}</pre>
+        </details>
+        <details>
+          <summary>Error / Logs</summary>
+          <pre id="error-json">No errors.</pre>
+        </details>
+
+        <h3>Artifacts</h3>
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Path</th><th>Size</th><th>Link</th></tr>
+          </thead>
+          <tbody id="artifacts-body">
+            <tr><td colspan="4" class="subtle">No artifacts.</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+
+    <script type="module" src="/static/app.js"></script>
   </body>
 </html>

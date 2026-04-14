@@ -153,3 +153,35 @@ python -m uvicorn dualstream.api:app --host 127.0.0.1 --port 8765
   - `TRANSFORMERS_OFFLINE=1`
 - Generation preflight fails fast with actionable errors if required local model/tokenizer assets are missing.
 - ARC preflight validates local task paths and writable output directories before starting jobs.
+## Browser GUI (FastAPI + vanilla HTML/CSS/JS)
+
+The GUI is now browser-first and served directly by FastAPI on the same origin as the API.
+
+### Run
+
+```bash
+python -m pip install -r requirements.txt
+python -m uvicorn dualstream.api:app --host 127.0.0.1 --port 8765
+```
+
+Then open `http://127.0.0.1:8765/`.
+
+### Architecture
+
+- **Backend API + UI server:** `dualstream/api.py`
+- **Job orchestration:** `dualstream/service.py`
+- **Browser assets:** `dualstream/web/index.html`, `dualstream/web/styles.css`, `dualstream/web/app.js`, `dualstream/web/api-client.js`
+
+No Electron, React, Vite, TypeScript, or Node runtime is required for normal GUI usage.
+
+### Browser UI workflow coverage
+
+The UI supports:
+1. Generate
+2. ARC Solve Task
+3. ARC Solve Dataset
+4. Kaggle Submit
+5. Job status/history and artifact browsing
+
+All frontend API calls use same-origin relative routes (`/generate`, `/jobs`, `/artifacts/...`).
+
