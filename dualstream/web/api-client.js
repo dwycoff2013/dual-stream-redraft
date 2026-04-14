@@ -35,5 +35,6 @@ export const api = {
   getJob: (jobId) => request(`/jobs/${encodeURIComponent(jobId)}`),
   cancelJob: (jobId) => request(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }),
   getArtifacts: (jobId) => request(`/artifacts/${encodeURIComponent(jobId)}`),
+  listScripts: () => request('/scripts'),
   submit: (route, payload) => request(route, { method: 'POST', body: JSON.stringify(payload) }),
 };

@@ -10,11 +10,11 @@ def test_root_and_static_assets_served() -> None:
 
     root = client.get("/")
     assert root.status_code == 200
-    assert "DualStream Local UI" in root.text
+    assert "DualStream Browser UI" in root.text
 
     js = client.get("/static/app.js")
     assert js.status_code == 200
-    assert 'postJSON("/preflight/generate"' in js.text
+    assert "payloadFromForm" in js.text
 
 
 def test_ui_uses_same_origin_relative_api_urls() -> None:
@@ -22,7 +22,7 @@ def test_ui_uses_same_origin_relative_api_urls() -> None:
 
     js = client.get("/static/app.js")
     assert "http://127.0.0.1" not in js.text
-    assert 'postJSON("/generate"' in js.text
+    assert "route: '/generate'" in js.text
 
 
 def test_preflight_endpoint_available() -> None:

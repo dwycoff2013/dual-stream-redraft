@@ -64,3 +64,16 @@ def test_start_arc_solve_task(monkeypatch, tmp_path) -> None:
     assert final.status == "completed"
     assert final.result is not None
     assert "metrics" in final.result
+
+
+def test_list_scripts_exposes_repo_scripts() -> None:
+    service = DualStreamService()
+    scripts = service.list_scripts()
+    assert any(item["name"] == "download_model.py" for item in scripts)
+
+
+def test_preflight_script_rejects_unknown_script(tmp_path) -> None:
+    service = DualStreamService()
+    result = service.preflight_script({"script_name": "missing.py", "outdir": str(tmp_path)})
+    assert result["ok"] is False
+    assert any("Script not found" in err for err in result["errors"])

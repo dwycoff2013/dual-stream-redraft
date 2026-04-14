@@ -33,6 +33,14 @@ def test_jobs_endpoints_still_work() -> None:
     assert isinstance(response.json(), list)
 
 
+def test_scripts_endpoint_returns_list() -> None:
+    client = TestClient(app)
+    response = client.get("/scripts")
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+
+
 def test_artifact_links_are_same_origin_and_well_formed(tmp_path: Path) -> None:
     outdir = tmp_path / "job-output"
     outdir.mkdir(parents=True, exist_ok=True)

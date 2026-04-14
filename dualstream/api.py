@@ -10,27 +10,17 @@ from fastapi.staticfiles import StaticFiles
 
 from .service import DualStreamService
 
-app = FastAPI(title="DualStream Local API", version="0.2.0")
-WEB_DIR = Path(__file__).resolve().parent / "web"
-
 app = FastAPI(title="DualStream Browser API", version="0.2.0")
 service = DualStreamService()
 WEB_ROOT = Path(__file__).resolve().parent / "web"
 
 if WEB_ROOT.exists():
-    app.mount("/static", StaticFiles(directory=WEB_ROOT / "static"), name="static")
+    app.mount("/static", StaticFiles(directory=WEB_ROOT), name="static")
 
 
 @app.get("/")
 def root() -> FileResponse:
     return FileResponse(WEB_ROOT / "index.html")
-
-app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
-
-
-@app.get("/")
-def root() -> FileResponse:
-    return FileResponse(WEB_DIR / "index.html")
 
 
 @app.get("/health")
@@ -80,6 +70,17 @@ def arc_solve_dataset(payload: dict) -> dict:
 @app.post("/arc/kaggle-submit")
 def arc_kaggle_submit(payload: dict) -> dict:
     job = service.start_kaggle_submit(payload)
+    return {"job_id": job.id, "status": job.status}
+
+
+@app.get("/scripts")
+def list_scripts() -> list[dict]:
+    return service.list_scripts()
+
+
+@app.post("/scripts/run")
+def run_script(payload: dict) -> dict:
+    job = service.start_script(payload)
     return {"job_id": job.id, "status": job.status}
 
 
