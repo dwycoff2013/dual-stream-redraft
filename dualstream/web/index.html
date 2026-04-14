@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DualStream Local UI</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>DualStream Local UI</h1>
+      <p id="offline-pill" class="pill">Offline mode: default ON</p>
+
+      <section>
+        <h2>Generate</h2>
+        <label>Prompt <textarea id="prompt" rows="4"></textarea></label>
+        <label>Model (local path or cached model id) <input id="model" value="gpt2" /></label>
+        <label>Output directory <input id="outdir" value="runs/gui-generate" /></label>
+        <label>Cache directory (optional) <input id="cacheDir" /></label>
+        <label><input type="checkbox" id="offline" checked /> Force offline</label>
+        <button id="preflight-generate">Run Preflight</button>
+        <button id="start-generate">Start Generate Job</button>
+      </section>
+
+      <section>
+        <h2>ARC Solve Task</h2>
+        <label>Task JSON path <input id="taskPath" /></label>
+        <label>Output directory <input id="taskOutdir" value="runs/gui-arc-task" /></label>
+        <button id="preflight-task">Run Preflight</button>
+        <button id="start-task">Start ARC Task Job</button>
+      </section>
+
+      <pre id="status"></pre>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

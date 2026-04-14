@@ -48,7 +48,9 @@ def test_start_arc_solve_task(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr("dualstream.service.write_submission", fake_write_submission)
 
-    job = service.start_arc_solve_task({"task": "x", "outdir": str(tmp_path)})
+    task_path = tmp_path / "task.json"
+    task_path.write_text("{}", encoding="utf-8")
+    job = service.start_arc_solve_task({"task": str(task_path), "outdir": str(tmp_path)})
 
     # wait for completion
     for _ in range(200):

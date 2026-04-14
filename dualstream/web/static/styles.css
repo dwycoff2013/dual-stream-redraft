@@ -1,0 +1,8 @@
+body { font-family: sans-serif; margin: 0; background: #111; color: #eee; }
+main { max-width: 900px; margin: 0 auto; padding: 16px; }
+section { border: 1px solid #444; border-radius: 6px; margin: 16px 0; padding: 12px; }
+label { display: block; margin: 8px 0; }
+input, textarea { width: 100%; background: #222; color: #eee; border: 1px solid #555; border-radius: 4px; padding: 8px; box-sizing: border-box; }
+button { margin-right: 8px; padding: 8px 12px; }
+.pill { display: inline-block; padding: 4px 8px; border-radius: 12px; background: #0b6; color: #021; font-weight: 700; }
+#status { background: #000; min-height: 220px; padding: 10px; overflow: auto; }
