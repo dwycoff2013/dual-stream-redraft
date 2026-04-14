@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import threading
 from typing import Any
 
 
@@ -10,6 +11,8 @@ OFFLINE_ENV_VARS = {
     "HF_HUB_OFFLINE": "1",
     "TRANSFORMERS_OFFLINE": "1",
 }
+
+_OFFLINE_ENV_LOCK = threading.RLock()
 
 
 def _is_local_model_path(model: str) -> Path | None:
@@ -108,18 +111,19 @@ def preflight_model_assets(model: str, offline: bool, cache_dir: str | None = No
 
 @contextmanager
 def enforce_offline_env(enabled: bool):
-    if not enabled:
-        yield
-        return
+    with _OFFLINE_ENV_LOCK:
+        if not enabled:
+            yield
+            return
 
-    previous = {k: os.environ.get(k) for k in OFFLINE_ENV_VARS}
-    try:
-        for key, value in OFFLINE_ENV_VARS.items():
-            os.environ[key] = value
-        yield
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
+        previous = {k: os.environ.get(k) for k in OFFLINE_ENV_VARS}
+        try:
+            for key, value in OFFLINE_ENV_VARS.items():
                 os.environ[key] = value
+            yield
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value

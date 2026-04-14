@@ -72,7 +72,10 @@ def test_start_generate_forces_local_files_only_in_offline_mode(monkeypatch, tmp
             }
 
     monkeypatch.setattr("dualstream.service.DualStreamGenerator", DummyGenerator)
-    monkeypatch.setattr("dualstream.service._run_generation", lambda *_args, **_kwargs: None)
+    def fake_run_generation(*_args, **_kwargs):
+        observed["hf_hub_offline_during_generate"] = os.environ.get("HF_HUB_OFFLINE") == "1"
+
+    monkeypatch.setattr("dualstream.service._run_generation", fake_run_generation)
     monkeypatch.setattr("dualstream.service.load_generation_artifacts", lambda _outdir: {"ok": True})
 
     service = DualStreamService()
@@ -96,9 +99,39 @@ def test_start_generate_forces_local_files_only_in_offline_mode(monkeypatch, tmp
 
     assert observed["local_files_only"] is True
     assert observed["hf_hub_offline"] is True
+    assert observed["hf_hub_offline_during_generate"] is False
 
 
 def test_enforce_offline_env_sets_expected_variables() -> None:
     with enforce_offline_env(True):
         assert os.environ["HF_HUB_OFFLINE"] == "1"
         assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
+
+
+def test_enforce_offline_env_serializes_contexts_across_modes() -> None:
+    import threading
+    import time
+
+    order: list[str] = []
+    entered = threading.Event()
+
+    def offline_worker() -> None:
+        with enforce_offline_env(True):
+            order.append("offline-enter")
+            entered.set()
+            time.sleep(0.05)
+            order.append("offline-exit")
+
+    def online_worker() -> None:
+        entered.wait(timeout=1)
+        with enforce_offline_env(False):
+            order.append("online-enter")
+
+    t1 = threading.Thread(target=offline_worker)
+    t2 = threading.Thread(target=online_worker)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert order == ["offline-enter", "offline-exit", "online-enter"]

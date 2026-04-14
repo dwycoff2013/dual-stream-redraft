@@ -229,11 +229,12 @@ class DualStreamService:
                     local_files_only=cfg.local_files_only,
                     cache_dir=cfg.cache_dir,
                 )
-                if cancelled.is_set():
-                    return {"cancelled": True}
 
-                self._update(job.id, progress=0.5, message="Generating")
-                _run_generation(gen, cfg, prompt, outdir)
+            if cancelled.is_set():
+                return {"cancelled": True}
+
+            self._update(job.id, progress=0.5, message="Generating")
+            _run_generation(gen, cfg, prompt, outdir)
             self._update(job.id, progress=0.9, message="Loading artifacts")
             return load_generation_artifacts(outdir)
 
