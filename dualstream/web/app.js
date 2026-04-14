@@ -18,6 +18,7 @@ const el = {
   result: document.getElementById('result-json'),
   errorJson: document.getElementById('error-json'),
   artifacts: document.getElementById('artifacts-body'),
+  scriptSelect: document.getElementById('script_name'),
 };
 
 function showError(message) {
@@ -149,10 +150,44 @@ function payloadFromForm() {
   if (state.tab === 'solve-dataset') {
     return { route: '/arc/solve-dataset', payload: { outdir, tasks_dir: String(fd.get('tasks_dir') || '').trim() } };
   }
+  if (state.tab === 'scripts') {
+    return {
+      route: '/scripts/run',
+      payload: {
+        outdir,
+        script_name: String(fd.get('script_name') || '').trim(),
+        args: String(fd.get('script_args') || '').trim(),
+        timeout_seconds: Number(fd.get('timeout_seconds') || 300),
+      },
+    };
+  }
   return {
     route: '/arc/kaggle-submit',
     payload: { tasks_dir: String(fd.get('kaggle_tasks_dir') || '').trim(), output: String(fd.get('output') || '').trim() },
   };
+}
+
+async function loadScripts() {
+  if (!el.scriptSelect) return;
+  try {
+    const scripts = await api.listScripts();
+    const options = Array.isArray(scripts) ? scripts : [];
+    el.scriptSelect.innerHTML = '';
+    options.forEach((script) => {
+      const opt = document.createElement('option');
+      opt.value = script.name;
+      opt.textContent = script.name;
+      el.scriptSelect.appendChild(opt);
+    });
+    if (!options.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No scripts found';
+      el.scriptSelect.appendChild(opt);
+    }
+  } catch (error) {
+    showError(`Unable to load scripts: ${error.message}`);
+  }
 }
 
 async function submitJob(event) {
@@ -196,7 +231,10 @@ el.cancelBtn.addEventListener('click', cancelSelectedJob);
 el.refreshBtn.addEventListener('click', () => loadJobs({ announce: true }));
 
 switchTab('generate');
-api.health().then(() => loadJobs({ announce: true })).catch(() => {
+api.health().then(async () => {
+  await loadScripts();
+  await loadJobs({ announce: true });
+}).catch(() => {
   setStatus('Backend health check failed. Try refresh in a moment.');
   loadJobs();
 });

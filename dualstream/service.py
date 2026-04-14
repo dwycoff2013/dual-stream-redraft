@@ -3,6 +3,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
+import shlex
+import subprocess
+import sys
 import threading
 import traceback
 from pathlib import Path
@@ -184,7 +188,45 @@ class DualStreamService:
             return self.preflight_generate(payload)
         if kind in {"arc_solve_task", "arc_solve_dataset", "kaggle_submit"}:
             return self.preflight_arc(payload, kind)
+        if kind == "script":
+            return self.preflight_script(payload)
         return {"ok": False, "kind": kind, "errors": [f"Unknown kind: {kind}"]}
+
+    @property
+    def _scripts_dir(self) -> Path:
+        return (Path(__file__).resolve().parent.parent / "scripts").resolve()
+
+    def list_scripts(self) -> list[dict[str, str]]:
+        scripts_dir = self._scripts_dir
+        if not scripts_dir.exists():
+            return []
+        return [
+            {"name": path.name, "path": str(path)}
+            for path in sorted(scripts_dir.glob("*.py"))
+            if path.is_file()
+        ]
+
+    def _resolve_script_path(self, script_name: str) -> Path:
+        script_path = (self._scripts_dir / script_name).resolve()
+        if self._scripts_dir not in script_path.parents or script_path.suffix != ".py":
+            raise ValueError("Script must be a Python file under scripts/")
+        return script_path
+
+    def preflight_script(self, payload: dict[str, Any]) -> dict[str, Any]:
+        errors: list[str] = []
+        script_name = str(payload.get("script_name", "")).strip()
+        outdir = Path(payload.get("outdir", ".")).resolve()
+        errors.extend(self._validate_writable_dir(outdir, "Output directory"))
+        if not script_name:
+            errors.append("Provide 'script_name'.")
+        else:
+            try:
+                script = self._resolve_script_path(script_name)
+                if not script.exists() or not script.is_file():
+                    errors.append(f"Script not found: {script_name}")
+            except ValueError as exc:
+                errors.append(str(exc))
+        return {"ok": not errors, "kind": "script", "errors": errors}
 
     def start_generate(self, payload: dict[str, Any]) -> JobRecord:
         def run(job: JobRecord, cancelled: threading.Event) -> dict[str, Any]:
@@ -332,3 +374,56 @@ class DualStreamService:
             }
 
         return self.create_job("kaggle_submit", run)
+
+    def start_script(self, payload: dict[str, Any]) -> JobRecord:
+        def run(job: JobRecord, cancelled: threading.Event) -> dict[str, Any]:
+            preflight = self.preflight_script(payload)
+            if not preflight["ok"]:
+                raise ValueError("Preflight failed: " + " | ".join(preflight["errors"]))
+            if cancelled.is_set():
+                return {"cancelled": True}
+
+            script_name = str(payload["script_name"]).strip()
+            script_path = self._resolve_script_path(script_name)
+            outdir = Path(payload.get("outdir", ".")).resolve()
+            outdir.mkdir(parents=True, exist_ok=True)
+            self._update(job.id, output_dir=str(outdir), progress=0.1, message=f"Running {script_name}")
+
+            args_raw = str(payload.get("args", "")).strip()
+            args = shlex.split(args_raw) if args_raw else []
+            cmd = [sys.executable, str(script_path), *args]
+            timeout = float(payload.get("timeout_seconds", 300))
+            completed = subprocess.run(
+                cmd,
+                cwd=Path(__file__).resolve().parent.parent,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            self._update(job.id, progress=0.9, message="Collecting script artifacts")
+
+            stdout_path = outdir / "script_stdout.txt"
+            stderr_path = outdir / "script_stderr.txt"
+            meta_path = outdir / "script_result.json"
+            stdout_path.write_text(completed.stdout, encoding="utf-8")
+            stderr_path.write_text(completed.stderr, encoding="utf-8")
+            meta = {
+                "script_name": script_name,
+                "args": args,
+                "returncode": completed.returncode,
+                "command": cmd,
+                "timed_out": False,
+            }
+            meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+            if completed.returncode != 0:
+                raise RuntimeError(f"Script failed with exit code {completed.returncode}")
+            return {
+                **meta,
+                "stdout_preview": completed.stdout[:2000],
+                "stderr_preview": completed.stderr[:2000],
+                "artifacts": discover_artifacts(outdir),
+            }
+
+        return self.create_job("script", run)

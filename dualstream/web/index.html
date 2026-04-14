@@ -50,6 +50,7 @@
           <button class="tab" data-tab="solve-task">ARC Solve Task</button>
           <button class="tab" data-tab="solve-dataset">ARC Solve Dataset</button>
           <button class="tab" data-tab="kaggle-submit">Kaggle Submit</button>
+          <button class="tab" data-tab="scripts">Scripts</button>
         </nav>
 
         <div id="error-banner" class="banner hidden" role="alert"></div>
@@ -90,6 +91,16 @@
             <input id="kaggle_tasks_dir" name="kaggle_tasks_dir" placeholder="/path/to/tasks" />
             <label for="output">Submission output file</label>
             <input id="output" name="output" value="runs/browser/submission.json" />
+          </fieldset>
+
+          <fieldset data-section="scripts" class="hidden">
+            <legend>Run script from scripts/</legend>
+            <label for="script_name">Script</label>
+            <select id="script_name" name="script_name"></select>
+            <label for="script_args">Arguments</label>
+            <input id="script_args" name="script_args" placeholder="--model gpt2 --cache-dir /tmp/hf" />
+            <label for="timeout_seconds">Timeout (seconds)</label>
+            <input id="timeout_seconds" name="timeout_seconds" type="number" value="300" min="1" />
           </fieldset>
 
           <div class="actions">
