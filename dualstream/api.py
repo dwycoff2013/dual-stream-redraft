@@ -10,10 +10,20 @@ from fastapi.staticfiles import StaticFiles
 
 from .service import DualStreamService
 
+app = FastAPI(title="DualStream Local API", version="0.2.0")
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
 app = FastAPI(title="DualStream Browser API", version="0.2.0")
 service = DualStreamService()
+WEB_ROOT = Path(__file__).resolve().parent / "web"
+
+if WEB_ROOT.exists():
+    app.mount("/static", StaticFiles(directory=WEB_ROOT / "static"), name="static")
+
+
+@app.get("/")
+def root() -> FileResponse:
+    return FileResponse(WEB_ROOT / "index.html")
 
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
@@ -26,6 +36,27 @@ def root() -> FileResponse:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/ui/status")
+def ui_status() -> dict[str, bool]:
+    return {"offline_default": True}
+
+
+@app.post("/preflight/{kind}")
+def preflight(kind: str, payload: dict) -> dict:
+    normalized = kind.replace("-", "_")
+    mapping = {
+        "generate": "generate",
+        "arc_solve_task": "arc_solve_task",
+        "arc_solve_dataset": "arc_solve_dataset",
+        "kaggle_submit": "kaggle_submit",
+    }
+    resolved = mapping.get(normalized)
+    if not resolved:
+        raise HTTPException(status_code=400, detail=f"Unsupported preflight kind: {kind}")
+    result = service.preflight(resolved, payload)
+    return result
 
 
 @app.post("/generate")
@@ -94,9 +125,9 @@ def get_artifact_file(job_id: str, artifact_path: str) -> FileResponse:
     job = service.get_job(job_id)
     if not job or not job.output_dir:
         raise HTTPException(status_code=404, detail="Job or output directory not found")
-    root = Path(job.output_dir).resolve()
-    target = (root / artifact_path).resolve()
-    if root not in target.parents and target != root:
+    root_dir = Path(job.output_dir).resolve()
+    target = (root_dir / artifact_path).resolve()
+    if root_dir not in target.parents and target != root_dir:
         raise HTTPException(status_code=400, detail="Invalid artifact path")
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")

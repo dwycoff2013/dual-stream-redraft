@@ -111,6 +111,48 @@ Per-task ARC outputs may include:
 
 MIT
 
+## Offline Usage
+
+This project is now designed to run locally and offline end-to-end with a single Python service.
+
+### Offline prerequisites (do this while online)
+
+1. Install Python dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+2. Ensure model artifacts are available locally, either:
+   - **Local model directory** (recommended): point `model` to a directory containing `config.json`, tokenizer files, and model weights.
+   - **Pre-populated HF cache**: pre-download model snapshots in your Hugging Face cache (`~/.cache/huggingface` or custom `--cache-dir`).
+
+If you need to pre-download while online, use the included helper:
+
+```bash
+python scripts/download_model.py --model gpt2
+```
+
+### Offline happy path
+
+1. Install Python dependencies.
+2. Ensure local model artifacts exist (local model path or pre-populated cache).
+3. Start the API + browser UI:
+
+```bash
+python -m uvicorn dualstream.api:app --host 127.0.0.1 --port 8765
+```
+
+4. Open `http://127.0.0.1:8765` in your browser.
+
+### Offline behavior
+
+- Offline mode defaults to **enabled** in the browser UI and backend preflight behavior.
+- When offline mode is enabled, runtime forces:
+  - `HF_HUB_OFFLINE=1`
+  - `TRANSFORMERS_OFFLINE=1`
+- Generation preflight fails fast with actionable errors if required local model/tokenizer assets are missing.
+- ARC preflight validates local task paths and writable output directories before starting jobs.
 ## Browser GUI (FastAPI + vanilla HTML/CSS/JS)
 
 The GUI is now browser-first and served directly by FastAPI on the same origin as the API.

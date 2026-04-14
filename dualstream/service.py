@@ -14,6 +14,7 @@ from .arc_solver import ArcSolver, SolverConfig, write_submission, write_task_ar
 from .arc_task import load_task, load_tasks_from_dir
 from .cli import _run_generation
 from .generator import DualStreamGenerator, GenerationConfig
+from .offline import enforce_offline_env, preflight_model_assets
 
 
 def _utcnow() -> str:
@@ -100,6 +101,91 @@ class DualStreamService:
                 job.message = "Cancellation requested"
             return True
 
+
+
+    def _resolve_offline(self, payload: dict[str, Any]) -> bool:
+        offline = payload.get("offline")
+        if offline is None:
+            return True
+        return bool(offline)
+
+    @staticmethod
+    def _validate_writable_dir(path: Path, label: str) -> list[str]:
+        errors: list[str] = []
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            probe = path / ".dualstream_write_test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+        except Exception as exc:
+            errors.append(f"{label} '{path}' is not writable: {exc}")
+        return errors
+
+    def preflight_generate(self, payload: dict[str, Any]) -> dict[str, Any]:
+        errors: list[str] = []
+        prompt = payload.get("prompt")
+        prompt_file = payload.get("prompt_file")
+        if not prompt and not prompt_file:
+            errors.append("Provide either 'prompt' or 'prompt_file'.")
+        if prompt_file:
+            pf = Path(prompt_file)
+            if not pf.exists() or not pf.is_file():
+                errors.append(f"Prompt file not found: {pf}")
+
+        outdir = Path(payload.get("outdir", ".")).resolve()
+        errors.extend(self._validate_writable_dir(outdir, "Output directory"))
+
+        if payload.get("include_probes") and payload.get("probe_pack"):
+            probe_pack = Path(payload["probe_pack"])
+            if not probe_pack.exists() or not probe_pack.is_file():
+                errors.append(f"Probe pack not found: {probe_pack}")
+
+        offline = self._resolve_offline(payload)
+        model = payload.get("model", "gpt2")
+        cache_dir = payload.get("cache_dir")
+        model_check = preflight_model_assets(model=model, offline=offline, cache_dir=cache_dir)
+        errors.extend(model_check["errors"])
+
+        return {
+            "ok": not errors,
+            "kind": "generate",
+            "offline": offline,
+            "model": model,
+            "model_source": model_check["model_source"],
+            "model_path": model_check["model_path"],
+            "errors": errors,
+        }
+
+    def preflight_arc(self, payload: dict[str, Any], kind: str) -> dict[str, Any]:
+        errors: list[str] = []
+        if kind == "arc_solve_task":
+            task = Path(payload.get("task", ""))
+            if not task.exists() or not task.is_file():
+                errors.append(f"Task JSON not found: {task}")
+            outdir = Path(payload.get("outdir", ".")).resolve()
+            errors.extend(self._validate_writable_dir(outdir, "Output directory"))
+        elif kind == "arc_solve_dataset":
+            tasks_dir = Path(payload.get("tasks_dir", ""))
+            if not tasks_dir.exists() or not tasks_dir.is_dir():
+                errors.append(f"Tasks directory not found: {tasks_dir}")
+            outdir = Path(payload.get("outdir", ".")).resolve()
+            errors.extend(self._validate_writable_dir(outdir, "Output directory"))
+        elif kind == "kaggle_submit":
+            tasks_dir = Path(payload.get("tasks_dir", ""))
+            if not tasks_dir.exists() or not tasks_dir.is_dir():
+                errors.append(f"Tasks directory not found: {tasks_dir}")
+            output = Path(payload.get("output", "submission.json")).resolve()
+            errors.extend(self._validate_writable_dir(output.parent, "Output parent directory"))
+
+        return {"ok": not errors, "kind": kind, "errors": errors}
+
+    def preflight(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if kind == "generate":
+            return self.preflight_generate(payload)
+        if kind in {"arc_solve_task", "arc_solve_dataset", "kaggle_submit"}:
+            return self.preflight_arc(payload, kind)
+        return {"ok": False, "kind": kind, "errors": [f"Unknown kind: {kind}"]}
+
     def start_generate(self, payload: dict[str, Any]) -> JobRecord:
         def run(job: JobRecord, cancelled: threading.Event) -> dict[str, Any]:
             prompt = payload.get("prompt")
@@ -112,6 +198,10 @@ class DualStreamService:
             outdir = Path(payload.get("outdir", ".")).resolve()
             outdir.mkdir(parents=True, exist_ok=True)
             self._update(job.id, output_dir=str(outdir), progress=0.05, message="Loading model")
+
+            preflight = self.preflight_generate(payload)
+            if not preflight["ok"]:
+                raise ValueError("Preflight failed: " + " | ".join(preflight["errors"]))
 
             cfg = GenerationConfig(
                 model=payload.get("model", "gpt2"),
@@ -128,16 +218,18 @@ class DualStreamService:
                 include_crc32=not bool(payload.get("no_crc32", False)),
                 include_running_hash=not bool(payload.get("no_running_hash", False)),
                 device=payload.get("device"),
-                local_files_only=bool(payload.get("offline", False)),
+                local_files_only=preflight["offline"],
                 cache_dir=payload.get("cache_dir"),
             )
 
-            gen = DualStreamGenerator(
-                cfg.model,
-                device=cfg.device,
-                local_files_only=cfg.local_files_only,
-                cache_dir=cfg.cache_dir,
-            )
+            with enforce_offline_env(cfg.local_files_only):
+                gen = DualStreamGenerator(
+                    cfg.model,
+                    device=cfg.device,
+                    local_files_only=cfg.local_files_only,
+                    cache_dir=cfg.cache_dir,
+                )
+
             if cancelled.is_set():
                 return {"cancelled": True}
 
@@ -161,6 +253,9 @@ class DualStreamService:
 
     def start_arc_solve_task(self, payload: dict[str, Any]) -> JobRecord:
         def run(job: JobRecord, cancelled: threading.Event) -> dict[str, Any]:
+            preflight = self.preflight_arc(payload, "arc_solve_task")
+            if not preflight["ok"]:
+                raise ValueError("Preflight failed: " + " | ".join(preflight["errors"]))
             task_path = payload["task"]
             outdir = Path(payload["outdir"]).resolve()
             outdir.mkdir(parents=True, exist_ok=True)
@@ -182,6 +277,9 @@ class DualStreamService:
 
     def start_arc_solve_dataset(self, payload: dict[str, Any]) -> JobRecord:
         def run(job: JobRecord, cancelled: threading.Event) -> dict[str, Any]:
+            preflight = self.preflight_arc(payload, "arc_solve_dataset")
+            if not preflight["ok"]:
+                raise ValueError("Preflight failed: " + " | ".join(preflight["errors"]))
             tasks_dir = payload["tasks_dir"]
             outdir = Path(payload["outdir"]).resolve()
             outdir.mkdir(parents=True, exist_ok=True)
@@ -210,6 +308,9 @@ class DualStreamService:
 
     def start_kaggle_submit(self, payload: dict[str, Any]) -> JobRecord:
         def run(job: JobRecord, cancelled: threading.Event) -> dict[str, Any]:
+            preflight = self.preflight_arc(payload, "kaggle_submit")
+            if not preflight["ok"]:
+                raise ValueError("Preflight failed: " + " | ".join(preflight["errors"]))
             tasks = load_tasks_from_dir(payload["tasks_dir"])
             output = Path(payload["output"]).resolve()
             self._update(job.id, output_dir=str(output.parent), progress=0.1, message="Solving tasks")
