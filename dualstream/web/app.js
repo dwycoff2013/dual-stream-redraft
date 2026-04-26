@@ -1,7 +1,7 @@
 import { api } from '/static/api-client.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
-const state = { tab: 'generate', jobs: [], selectedJobId: null, poller: null };
+const state = { tab: 'offline-generate', jobs: [], selectedJobId: null, poller: null };
 
 const el = {
   tabs: Array.from(document.querySelectorAll('.tab')),
@@ -39,6 +39,14 @@ function switchTab(tab) {
   state.tab = tab;
   el.tabs.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
   el.sections.forEach((section) => section.classList.toggle('hidden', section.dataset.section !== tab));
+}
+
+function updateArcModeFields() {
+  if (!el.arcMode) return;
+  const mode = el.arcMode.value;
+  el.arcTaskFields?.classList.toggle('hidden', mode !== 'solve-task');
+  el.arcDatasetFields?.classList.toggle('hidden', mode !== 'solve-dataset');
+  el.arcKaggleFields?.classList.toggle('hidden', mode !== 'kaggle-submit');
 }
 
 function activeJob() {
@@ -165,7 +173,7 @@ function managePolling() {
 function payloadFromForm() {
   const fd = new FormData(el.form);
   const outdir = String(fd.get('outdir') || '').trim();
-  if (state.tab === 'generate') {
+  if (state.tab === 'offline-generate') {
     return {
       route: '/generate',
       payload: {
@@ -173,14 +181,25 @@ function payloadFromForm() {
         prompt: String(fd.get('prompt') || '').trim(),
         model: String(fd.get('model') || 'gpt2').trim(),
         max_new_tokens: Number(fd.get('max_new_tokens') || 128),
+        offline: true,
       },
     };
   }
-  if (state.tab === 'solve-task') {
-    return { route: '/arc/solve-task', payload: { outdir, task: String(fd.get('task') || '').trim() } };
-  }
-  if (state.tab === 'solve-dataset') {
-    return { route: '/arc/solve-dataset', payload: { outdir, tasks_dir: String(fd.get('tasks_dir') || '').trim() } };
+  if (state.tab === 'arc-solving') {
+    const mode = String(fd.get('arc_mode') || 'solve-task');
+    if (mode === 'solve-task') {
+      return { route: '/arc/solve-task', payload: { outdir, task: String(fd.get('task') || '').trim() } };
+    }
+    if (mode === 'solve-dataset') {
+      return { route: '/arc/solve-dataset', payload: { outdir, tasks_dir: String(fd.get('tasks_dir') || '').trim() } };
+    }
+    return {
+      route: '/arc/kaggle-submit',
+      payload: {
+        tasks_dir: String(fd.get('kaggle_tasks_dir') || '').trim(),
+        output: String(fd.get('output') || '').trim(),
+      },
+    };
   }
   if (state.tab === 'scripts') {
     return {
@@ -193,10 +212,7 @@ function payloadFromForm() {
       },
     };
   }
-  return {
-    route: '/arc/kaggle-submit',
-    payload: { tasks_dir: String(fd.get('kaggle_tasks_dir') || '').trim(), output: String(fd.get('output') || '').trim() },
-  };
+  return { route: '/generate', payload: { outdir, prompt: '', model: 'gpt2', offline: true } };
 }
 
 async function loadScripts() {
@@ -267,7 +283,7 @@ if (el.compareLayout && el.compareGrid) {
   });
 }
 
-switchTab('generate');
+switchTab('offline-generate');
 api.health().then(async () => {
   await loadScripts();
   await loadJobs({ announce: true });
