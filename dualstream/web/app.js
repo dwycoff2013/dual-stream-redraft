@@ -19,10 +19,6 @@ const el = {
   errorJson: document.getElementById('error-json'),
   artifacts: document.getElementById('artifacts-body'),
   scriptSelect: document.getElementById('script_name'),
-  arcMode: document.getElementById('arc_mode'),
-  arcTaskFields: document.getElementById('arc-task-fields'),
-  arcDatasetFields: document.getElementById('arc-dataset-fields'),
-  arcKaggleFields: document.getElementById('arc-kaggle-fields'),
   compareLayout: document.getElementById('compare-layout'),
   compareGrid: document.getElementById('compare-grid'),
   answerPreview: document.getElementById('answer-preview'),
@@ -285,10 +281,6 @@ if (el.compareLayout && el.compareGrid) {
   el.compareLayout.addEventListener('change', () => {
     el.compareGrid.dataset.layout = el.compareLayout.value;
   });
-}
-if (el.arcMode) {
-  el.arcMode.addEventListener('change', updateArcModeFields);
-  updateArcModeFields();
 }
 
 switchTab('offline-generate');
