@@ -24,6 +24,8 @@ def test_static_assets_are_reachable() -> None:
     assert css.status_code == 200
     assert js.status_code == 200
     assert api_js.status_code == 200
+    assert "function formatAstCode" in js.text
+    assert ".ast-badge--critical" in css.text
 
 
 def test_jobs_endpoints_still_work() -> None:
