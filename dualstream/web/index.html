@@ -138,6 +138,29 @@
             <tr><td colspan="4" class="subtle">No artifacts.</td></tr>
           </tbody>
         </table>
+
+        <h3>Generation Comparison</h3>
+        <div class="compare-controls">
+          <label for="compare-layout">Layout</label>
+          <select id="compare-layout">
+            <option value="side-by-side">Side-by-side</option>
+            <option value="over-under">Over-under</option>
+          </select>
+        </div>
+        <div id="compare-grid" class="compare-grid" data-layout="side-by-side">
+          <article class="compare-pane">
+            <h4>answer.txt</h4>
+            <pre id="answer-preview" class="compare-text subtle">No answer.txt available.</pre>
+          </article>
+          <article class="compare-pane">
+            <h4>monologue.txt</h4>
+            <pre id="monologue-preview" class="compare-text subtle">No monologue.txt available.</pre>
+          </article>
+          <article class="compare-pane compare-pane-full">
+            <h4>monologue.jsonl (preview)</h4>
+            <pre id="jsonl-preview" class="compare-text subtle">No monologue.jsonl frames available.</pre>
+          </article>
+        </div>
       </section>
     </main>
 
