@@ -3,53 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DualStream Local UI</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-  </head>
-  <body>
-    <main>
-      <h1>DualStream Local UI</h1>
-      <p id="offline-pill" class="pill">Offline mode: default ON</p>
-
-      <section>
-        <h2>Generate</h2>
-        <label>Prompt <textarea id="prompt" rows="4"></textarea></label>
-        <label>Model (local path or cached model id) <input id="model" value="gpt2" /></label>
-        <label>Output directory <input id="outdir" value="runs/gui-generate" /></label>
-        <label>Cache directory (optional) <input id="cacheDir" /></label>
-        <label><input type="checkbox" id="offline" checked /> Force offline</label>
-        <button id="preflight-generate">Run Preflight</button>
-        <button id="start-generate">Start Generate Job</button>
-      </section>
-
-      <section>
-        <h2>ARC Solve Task</h2>
-        <label>Task JSON path <input id="taskPath" /></label>
-        <label>Output directory <input id="taskOutdir" value="runs/gui-arc-task" /></label>
-        <button id="preflight-task">Run Preflight</button>
-        <button id="start-task">Start ARC Task Job</button>
-      </section>
-
-      <pre id="status"></pre>
-    </main>
-    <script src="/static/app.js"></script>
     <title>DualStream Browser UI</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <header class="topbar">
       <h1>DualStream</h1>
-      <p class="subtle">Simple browser UI for generation and ARC workflows</p>
+      <p class="subtle">Modern dark UI for offline generation and ARC solving workflows</p>
     </header>
 
     <main class="layout">
-      <section class="panel">
+      <section class="panel glass">
         <h2>Run Job</h2>
         <nav class="tabs" aria-label="Job workflow tabs">
-          <button class="tab active" data-tab="generate">Generate</button>
-          <button class="tab" data-tab="solve-task">ARC Solve Task</button>
-          <button class="tab" data-tab="solve-dataset">ARC Solve Dataset</button>
-          <button class="tab" data-tab="kaggle-submit">Kaggle Submit</button>
+          <button class="tab active" data-tab="offline-generate">Offline Generation</button>
+          <button class="tab" data-tab="arc-solving">ARC Solving</button>
           <button class="tab" data-tab="scripts">Scripts</button>
         </nav>
 
@@ -63,34 +31,42 @@
             <input id="outdir" name="outdir" value="runs/browser" />
           </fieldset>
 
-          <fieldset data-section="generate">
-            <legend>Generate</legend>
+          <fieldset data-section="offline-generate">
+            <legend>Offline Generation</legend>
             <label for="prompt">Prompt</label>
             <textarea id="prompt" name="prompt" rows="5"></textarea>
             <label for="model">Model</label>
             <input id="model" name="model" value="gpt2" />
             <label for="max_new_tokens">Max new tokens</label>
             <input id="max_new_tokens" name="max_new_tokens" type="number" value="128" min="1" />
+            <p class="subtle">Offline mode is forced ON for this tab.</p>
           </fieldset>
 
-          <fieldset data-section="solve-task" class="hidden">
-            <legend>ARC Solve Task</legend>
-            <label for="task">Task file path</label>
-            <input id="task" name="task" placeholder="/path/to/task.json" />
-          </fieldset>
+          <fieldset data-section="arc-solving" class="hidden">
+            <legend>ARC Solving</legend>
+            <label for="arc_mode">Mode</label>
+            <select id="arc_mode" name="arc_mode">
+              <option value="solve-task">Solve single task</option>
+              <option value="solve-dataset">Solve dataset</option>
+              <option value="kaggle-submit">Kaggle submit</option>
+            </select>
 
-          <fieldset data-section="solve-dataset" class="hidden">
-            <legend>ARC Solve Dataset</legend>
-            <label for="tasks_dir">Tasks directory</label>
-            <input id="tasks_dir" name="tasks_dir" placeholder="/path/to/tasks" />
-          </fieldset>
+            <div id="arc-task-fields" class="stack">
+              <label for="task">Task file path</label>
+              <input id="task" name="task" placeholder="/path/to/task.json" />
+            </div>
 
-          <fieldset data-section="kaggle-submit" class="hidden">
-            <legend>Kaggle Submit</legend>
-            <label for="kaggle_tasks_dir">Tasks directory</label>
-            <input id="kaggle_tasks_dir" name="kaggle_tasks_dir" placeholder="/path/to/tasks" />
-            <label for="output">Submission output file</label>
-            <input id="output" name="output" value="runs/browser/submission.json" />
+            <div id="arc-dataset-fields" class="stack hidden">
+              <label for="tasks_dir">Tasks directory</label>
+              <input id="tasks_dir" name="tasks_dir" placeholder="/path/to/tasks" />
+            </div>
+
+            <div id="arc-kaggle-fields" class="stack hidden">
+              <label for="kaggle_tasks_dir">Tasks directory</label>
+              <input id="kaggle_tasks_dir" name="kaggle_tasks_dir" placeholder="/path/to/tasks" />
+              <label for="output">Submission output file</label>
+              <input id="output" name="output" value="runs/browser/submission.json" />
+            </div>
           </fieldset>
 
           <fieldset data-section="scripts" class="hidden">
@@ -111,14 +87,14 @@
         </form>
       </section>
 
-      <section class="panel">
+      <section class="panel glass">
         <h2>Jobs</h2>
         <p>Selected job: <strong id="selected-job">None</strong></p>
         <div id="job-meta" class="subtle">No job selected.</div>
         <ul id="jobs-list" class="jobs"></ul>
       </section>
 
-      <section class="panel wide">
+      <section class="panel wide glass">
         <h2>Job Output</h2>
         <details>
           <summary>Result JSON</summary>
@@ -138,6 +114,29 @@
             <tr><td colspan="4" class="subtle">No artifacts.</td></tr>
           </tbody>
         </table>
+
+        <h3>Generation Comparison</h3>
+        <div class="compare-controls">
+          <label for="compare-layout">Layout</label>
+          <select id="compare-layout">
+            <option value="side-by-side">Side-by-side</option>
+            <option value="over-under">Over-under</option>
+          </select>
+        </div>
+        <div id="compare-grid" class="compare-grid" data-layout="side-by-side">
+          <article class="compare-pane">
+            <h4>answer.txt</h4>
+            <pre id="answer-preview" class="compare-text subtle">No answer.txt available.</pre>
+          </article>
+          <article class="compare-pane">
+            <h4>monologue.txt</h4>
+            <pre id="monologue-preview" class="compare-text subtle">No monologue.txt available.</pre>
+          </article>
+          <article class="compare-pane compare-pane-full">
+            <h4>monologue.jsonl (preview)</h4>
+            <pre id="jsonl-preview" class="compare-text subtle">No monologue.jsonl frames available.</pre>
+          </article>
+        </div>
       </section>
     </main>
 

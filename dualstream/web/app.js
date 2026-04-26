@@ -1,7 +1,7 @@
 import { api } from '/static/api-client.js';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
-const state = { tab: 'generate', jobs: [], selectedJobId: null, poller: null };
+const state = { tab: 'offline-generate', jobs: [], selectedJobId: null, poller: null };
 
 const el = {
   tabs: Array.from(document.querySelectorAll('.tab')),
@@ -19,7 +19,18 @@ const el = {
   errorJson: document.getElementById('error-json'),
   artifacts: document.getElementById('artifacts-body'),
   scriptSelect: document.getElementById('script_name'),
+  arcMode: document.getElementById('arc_mode'),
+  arcTaskFields: document.getElementById('arc-task-fields'),
+  arcDatasetFields: document.getElementById('arc-dataset-fields'),
+  arcKaggleFields: document.getElementById('arc-kaggle-fields'),
+  compareLayout: document.getElementById('compare-layout'),
+  compareGrid: document.getElementById('compare-grid'),
+  answerPreview: document.getElementById('answer-preview'),
+  monologuePreview: document.getElementById('monologue-preview'),
+  jsonlPreview: document.getElementById('jsonl-preview'),
 };
+
+const JSONL_PREVIEW_LIMIT = 120;
 
 function showError(message) {
   el.error.textContent = message;
@@ -32,6 +43,14 @@ function switchTab(tab) {
   state.tab = tab;
   el.tabs.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
   el.sections.forEach((section) => section.classList.toggle('hidden', section.dataset.section !== tab));
+}
+
+function updateArcModeFields() {
+  if (!el.arcMode) return;
+  const mode = el.arcMode.value;
+  el.arcTaskFields?.classList.toggle('hidden', mode !== 'solve-task');
+  el.arcDatasetFields?.classList.toggle('hidden', mode !== 'solve-dataset');
+  el.arcKaggleFields?.classList.toggle('hidden', mode !== 'kaggle-submit');
 }
 
 function activeJob() {
@@ -65,6 +84,7 @@ async function renderSelectedJob() {
     el.errorJson.textContent = 'No errors.';
     el.cancelBtn.disabled = true;
     renderArtifacts([]);
+    renderComparison(null);
     return;
   }
 
@@ -73,6 +93,7 @@ async function renderSelectedJob() {
   el.result.textContent = JSON.stringify(job.result || {}, null, 2);
   el.errorJson.textContent = job.error || JSON.stringify(job.logs || [], null, 2) || 'No errors.';
   el.cancelBtn.disabled = TERMINAL.has(job.status);
+  renderComparison(job);
 
   try {
     const artifacts = await api.getArtifacts(job.id);
@@ -81,6 +102,29 @@ async function renderSelectedJob() {
     renderArtifacts([]);
     showError(`Artifacts unavailable: ${error.message}`);
   }
+}
+
+function renderComparison(job) {
+  if (!el.answerPreview || !el.monologuePreview || !el.jsonlPreview) return;
+
+  const result = job?.result || {};
+  const answer = typeof result.answer_text === 'string' ? result.answer_text : '';
+  const monologue = typeof result.monologue_text === 'string' ? result.monologue_text : '';
+  const frames = Array.isArray(result.frames) ? result.frames : [];
+
+  el.answerPreview.textContent = answer || 'No answer.txt available.';
+  el.monologuePreview.textContent = monologue || 'No monologue.txt available.';
+
+  if (!frames.length) {
+    el.jsonlPreview.textContent = 'No monologue.jsonl frames available.';
+    return;
+  }
+
+  const previewFrames = frames.slice(0, JSONL_PREVIEW_LIMIT).map((row) => JSON.stringify(row));
+  const suffix = frames.length > JSONL_PREVIEW_LIMIT
+    ? `\n… truncated ${frames.length - JSONL_PREVIEW_LIMIT} additional row(s).`
+    : '';
+  el.jsonlPreview.textContent = `${previewFrames.join('\n')}${suffix}`;
 }
 
 function renderArtifacts(artifacts) {
@@ -133,7 +177,7 @@ function managePolling() {
 function payloadFromForm() {
   const fd = new FormData(el.form);
   const outdir = String(fd.get('outdir') || '').trim();
-  if (state.tab === 'generate') {
+  if (state.tab === 'offline-generate') {
     return {
       route: '/generate',
       payload: {
@@ -141,14 +185,25 @@ function payloadFromForm() {
         prompt: String(fd.get('prompt') || '').trim(),
         model: String(fd.get('model') || 'gpt2').trim(),
         max_new_tokens: Number(fd.get('max_new_tokens') || 128),
+        offline: true,
       },
     };
   }
-  if (state.tab === 'solve-task') {
-    return { route: '/arc/solve-task', payload: { outdir, task: String(fd.get('task') || '').trim() } };
-  }
-  if (state.tab === 'solve-dataset') {
-    return { route: '/arc/solve-dataset', payload: { outdir, tasks_dir: String(fd.get('tasks_dir') || '').trim() } };
+  if (state.tab === 'arc-solving') {
+    const mode = String(fd.get('arc_mode') || 'solve-task');
+    if (mode === 'solve-task') {
+      return { route: '/arc/solve-task', payload: { outdir, task: String(fd.get('task') || '').trim() } };
+    }
+    if (mode === 'solve-dataset') {
+      return { route: '/arc/solve-dataset', payload: { outdir, tasks_dir: String(fd.get('tasks_dir') || '').trim() } };
+    }
+    return {
+      route: '/arc/kaggle-submit',
+      payload: {
+        tasks_dir: String(fd.get('kaggle_tasks_dir') || '').trim(),
+        output: String(fd.get('output') || '').trim(),
+      },
+    };
   }
   if (state.tab === 'scripts') {
     return {
@@ -161,10 +216,7 @@ function payloadFromForm() {
       },
     };
   }
-  return {
-    route: '/arc/kaggle-submit',
-    payload: { tasks_dir: String(fd.get('kaggle_tasks_dir') || '').trim(), output: String(fd.get('output') || '').trim() },
-  };
+  return { route: '/generate', payload: { outdir, prompt: '', model: 'gpt2', offline: true } };
 }
 
 async function loadScripts() {
@@ -229,8 +281,17 @@ el.tabs.forEach((btn) => btn.addEventListener('click', () => switchTab(btn.datas
 el.form.addEventListener('submit', submitJob);
 el.cancelBtn.addEventListener('click', cancelSelectedJob);
 el.refreshBtn.addEventListener('click', () => loadJobs({ announce: true }));
+if (el.compareLayout && el.compareGrid) {
+  el.compareLayout.addEventListener('change', () => {
+    el.compareGrid.dataset.layout = el.compareLayout.value;
+  });
+}
+if (el.arcMode) {
+  el.arcMode.addEventListener('change', updateArcModeFields);
+  updateArcModeFields();
+}
 
-switchTab('generate');
+switchTab('offline-generate');
 api.health().then(async () => {
   await loadScripts();
   await loadJobs({ announce: true });

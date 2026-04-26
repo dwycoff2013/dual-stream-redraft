@@ -2,32 +2,49 @@
   color-scheme: light dark;
   font-family: Inter, system-ui, sans-serif;
 }
-body { margin: 0; background: #111827; color: #e5e7eb; }
-.topbar { padding: 1rem 1.25rem; border-bottom: 1px solid #374151; }
+body { margin: 0; background: radial-gradient(circle at 15% 15%, #18243f 0%, #0b1020 45%, #080b16 100%); color: #e5e7eb; }
+.topbar { padding: 1.2rem 1.35rem; border-bottom: 1px solid #334155; background: rgba(15, 23, 42, 0.72); backdrop-filter: blur(6px); }
+.topbar h1 { margin: 0; letter-spacing: 0.02em; }
 .subtle { color: #9ca3af; }
 .layout { display: grid; gap: 1rem; padding: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.panel { background: #1f2937; border: 1px solid #374151; border-radius: 8px; padding: 1rem; }
+.panel { background: #111827cc; border: 1px solid #334155; border-radius: 12px; padding: 1rem; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25); }
+.glass { backdrop-filter: blur(8px); }
 .panel.wide { grid-column: 1 / -1; }
 .tabs { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
-.tab { border: 1px solid #4b5563; background: #374151; color: inherit; padding: .4rem .6rem; border-radius: 6px; cursor: pointer; }
-.tab.active { border-color: #60a5fa; background: #1d4ed8; }
+.tab { border: 1px solid #475569; background: linear-gradient(180deg, #1e293b, #0f172a); color: inherit; padding: .45rem .7rem; border-radius: 999px; cursor: pointer; transition: all .18s ease; }
+.tab:hover { border-color: #60a5fa; transform: translateY(-1px); }
+.tab.active { border-color: #60a5fa; background: linear-gradient(180deg, #2563eb, #1d4ed8); box-shadow: 0 0 0 1px #1e40af; }
 .stack { display: grid; gap: .75rem; }
-fieldset { border: 1px solid #4b5563; border-radius: 6px; padding: .75rem; display: grid; gap: .45rem; }
+fieldset { border: 1px solid #475569; border-radius: 10px; padding: .85rem; display: grid; gap: .45rem; background: #0b1224aa; }
 label { font-size: .92rem; }
 input, textarea, button { font: inherit; }
-input, textarea { background: #111827; color: inherit; border: 1px solid #4b5563; border-radius: 4px; padding: .4rem; }
+input, textarea, select { background: #0f172a; color: inherit; border: 1px solid #475569; border-radius: 8px; padding: .48rem .52rem; }
+.select, select { font: inherit; }
 .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-button { padding: .45rem .75rem; border-radius: 5px; border: 1px solid #4b5563; background: #374151; color: inherit; cursor: pointer; }
+button { padding: .5rem .8rem; border-radius: 8px; border: 1px solid #475569; background: linear-gradient(180deg, #1f2937, #111827); color: inherit; cursor: pointer; transition: all .15s ease; }
+button:hover:enabled { border-color: #60a5fa; transform: translateY(-1px); }
 button:disabled { opacity: .45; cursor: not-allowed; }
-.banner { border: 1px solid #f87171; background: #7f1d1d; padding: .5rem; margin-bottom: .5rem; border-radius: 6px; }
+.banner { border: 1px solid #f87171; background: #7f1d1d; padding: .5rem; margin-bottom: .5rem; border-radius: 8px; }
 .status { margin-bottom: .5rem; color: #bfdbfe; }
 .jobs { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; }
 .jobs button { width: 100%; text-align: left; margin-bottom: .35rem; }
-pre { white-space: pre-wrap; overflow-x: auto; }
+pre { white-space: pre-wrap; overflow-x: auto; background: #0307128a; border: 1px solid #334155; border-radius: 8px; padding: .6rem; }
 table { width: 100%; border-collapse: collapse; }
 th, td { border-bottom: 1px solid #374151; padding: .45rem; text-align: left; }
 .hidden { display: none !important; }
+
+.compare-controls { display: flex; align-items: center; gap: .5rem; margin: .75rem 0; }
+.compare-grid { display: grid; gap: .75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.compare-grid[data-layout="over-under"] { grid-template-columns: 1fr; }
+.compare-pane { border: 1px solid #374151; border-radius: 8px; padding: .65rem; background: #111827; min-height: 180px; }
+.compare-pane-full { grid-column: 1 / -1; }
+.compare-grid[data-layout="over-under"] .compare-pane-full { grid-column: auto; }
+.compare-pane h4 { margin: 0 0 .45rem; font-size: .95rem; }
+.compare-text { margin: 0; max-height: 320px; overflow: auto; }
+
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
   .panel.wide { grid-column: auto; }
+  .compare-grid { grid-template-columns: 1fr; }
+  .compare-pane-full { grid-column: auto; }
 }
