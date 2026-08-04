@@ -30,6 +30,7 @@ class GenerationConfig:
 
     include_probes: bool = False
     probe_pack_path: Optional[str] = None
+    signal_schema_id: str = "AST-1"
 
     # If no probe pack is provided, a *very small* heuristic fallback can be enabled
     # to reproduce the paper's illustrative Appendix A example shape.
@@ -199,6 +200,12 @@ class DualStreamGenerator:
         except Exception:
             pass
 
+        if re.search(r"\b(backdoor|bypass|sabotage|hidden admin)\b", prompt_lower):
+            hits.append((3101, 0.86))
+
+        if re.search(r"\b(vpn|credential|password|phish|helpdesk)\b", prompt_lower):
+            hits.append((3201, 0.84))
+
         return hits
 
     def generate(self, prompt: str, cfg: GenerationConfig) -> Dict[str, Any]:
@@ -213,8 +220,24 @@ class DualStreamGenerator:
         prompt_nonce = random.getrandbits(64)
 
         probe_pack: Optional[ProbePack] = None
+        probe_pack_id: Optional[str] = None
+        probe_pack_hash: Optional[str] = None
         if cfg.include_probes and cfg.probe_pack_path:
             probe_pack = ProbePack.from_json(cfg.probe_pack_path)
+            probe_pack_id = cfg.probe_pack_path
+            with open(cfg.probe_pack_path, "rb") as f:
+                probe_pack_hash = hashlib.sha256(f.read()).hexdigest()
+        signal_schema_hash = hashlib.sha256(cfg.signal_schema_id.encode("utf-8")).hexdigest()
+
+        rendered_prompt = self._render_prompt(prompt)
+        model_inputs = self.tokenizer(rendered_prompt, return_tensors="pt")
+        input_ids = model_inputs["input_ids"].to(device)
+
+        attention_mask = model_inputs.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids, device=device)
+        else:
+            attention_mask = attention_mask.to(device)
 
         rendered_prompt = self._render_prompt(prompt)
         model_inputs = self.tokenizer(rendered_prompt, return_tensors="pt")
@@ -251,7 +274,14 @@ class DualStreamGenerator:
                 probs_full = self._softmax(logits)  # pre-sampling distribution
 
                 # Evidence top-K (pre-sampling; prior to filtering)
-                k = int(cfg.top_k)
+                if cfg.compact_evidence:
+                    from .evidence_profile import get_evidence_profile
+                    profile = get_evidence_profile(cfg.evidence_profile)
+                    k = max(int(cfg.top_k), int(profile.base_k))
+                    if cfg.adaptive_k:
+                        k = max(k, int(cfg.max_adaptive_k or profile.max_adaptive_k))
+                else:
+                    k = int(cfg.top_k)
                 top_probs, top_ids = torch.topk(probs_full, k=k)
                 top_ids_list = [int(x) for x in top_ids.tolist()]
                 top_probs_list = [float(x) for x in top_probs.tolist()]
@@ -315,6 +345,24 @@ class DualStreamGenerator:
                     topk=topk_tokens,
                     attn=attn_summaries,
                     concepts=concepts,
+                    signal_schema_id=cfg.signal_schema_id,
+                    signal_schema_hash=signal_schema_hash,
+                    probe_pack_id=probe_pack_id,
+                    probe_pack_hash=probe_pack_hash,
+                    capture_stage="post_model_logits_pre_temperature_pre_penalty_pre_mask_pre_sampling",
+                    decode_controls_applied=(
+                        ["temperature", "top_p", "token_sampling"]
+                        if cfg.do_sample
+                        else ["argmax_decoding"]
+                    ),
+                    audit_tier=decision.tier,
+                    audit_path_id=rand_meta["audit_path_id"],
+                    audit_nonce_hash=rand_meta["audit_nonce_hash"],
+                    randomized_probe_selection=rand_meta["randomized_probe_selection"],
+                    risk_score=risk_score,
+                    entropy=entropy,
+                    refusal_mass=refusal_mass,
+                    affirmation_mass=affirmation_mass,
                 )
                 frames.append(frame)
 
@@ -344,13 +392,45 @@ class DualStreamGenerator:
                 )
 
         answer_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        outcome = coherence_outcome(answer_text, frames, decode_token=lambda tid: self.tokenizer.decode([tid]), risk_threshold_review=cfg.risk_threshold_review, risk_threshold_fail=cfg.risk_threshold_fail)
+        fallback = None
+        if outcome.outcome in {"FAIL","FALLBACK"}:
+            fallback = FallbackRouter(max_retries=cfg.max_red_retries, strategy=cfg.fallback_strategy).route(retry_count=cfg.max_red_retries, reason=outcome.outcome, unchanged_retry_attempted=True)
+            frames[-1].fallback_state = fallback.action if frames else None
+            frames[-1].fallback_reason = fallback.reason if frames else None
+
+        compact_bytes = None
+        if cfg.compact_evidence:
+            from .compact_evidence import encode_compact_sequence
+            compact_bytes = encode_compact_sequence(
+                frames,
+                profile=cfg.evidence_profile,
+                sequence_id=prompt_nonce,
+                chunk_token_capacity=cfg.chunk_token_capacity,
+                adaptive_k=cfg.adaptive_k,
+                max_adaptive_k=cfg.max_adaptive_k,
+                wire_version=cfg.compact_wire_version,
+                audit_key=cfg.audit_key,
+                audit_key_id=cfg.audit_key_id,
+                stochastic_rate_ppm=cfg.stochastic_rate_ppm,
+                benchmark_id=cfg.benchmark_id,
+            )
 
         return {
             "prompt_nonce": prompt_nonce,
             "answer": answer_text,
             "frames": frames,
             "frame_bytes": frame_bytes,
+            "compact_evidence_bytes": compact_bytes,
+            "answer_token_ids": generated_ids,
+            "fallback_text": None if fallback is None else fallback.fallback_text,
             "running_hash": None if running_hash is None else running_hash.digest_hex(),
             "model": self.model_name,
             "config": cfg,
+            "audit_metadata": {
+                "randomized_audit": cfg.randomized_audit,
+                "audit_nonce_hash": frames[-1].audit_nonce_hash if frames else None,
+                "audit_path_id": frames[-1].audit_path_id if frames else None,
+                "outcome": outcome.outcome,
+            },
         }

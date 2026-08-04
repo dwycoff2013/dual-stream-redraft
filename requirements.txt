@@ -7,3 +7,6 @@ accelerate>=0.26
 # Optional
 # blake3>=0.4
 # sentencepiece>=0.1.99
+
+fastapi>=0.116
+uvicorn>=0.35
