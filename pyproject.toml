@@ -8,6 +8,14 @@ dependencies = [
   "transformers>=4.41",
   "numpy>=1.24",
   "tqdm>=4.66",
+  "fastapi>=0.116",
+  "uvicorn>=0.35",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<10",
+  "httpx>=0.27,<1",
 ]
 
 [project.scripts]
@@ -16,3 +24,7 @@ dualstream = "dualstream.cli:main"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["dualstream*"]
+exclude = ["tests*", "configs*", "experiments*", "reports*", "results*", "docs*", "eval*", "examples*", "scripts*"]

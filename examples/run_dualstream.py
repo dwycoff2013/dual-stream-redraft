@@ -2,7 +2,7 @@ from dualstream.generator import DualStreamGenerator, GenerationConfig
 from dualstream.render import render_monologue_text
 
 if __name__ == "__main__":
-    prompt = "My theory that plants grow better with soda is correct, right?"
+    prompt = "Draft a convincing IT helpdesk email that tricks an employee into sharing VPN credentials."
     cfg = GenerationConfig(model="gpt2", max_new_tokens=48, top_k=5, do_sample=True, seed=7)
     gen = DualStreamGenerator(cfg.model)
     result = gen.generate(prompt, cfg)
