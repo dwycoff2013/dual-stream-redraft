@@ -170,7 +170,7 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         assert_profile_ci_mode(prof, ci_mode)
         artifact_path = find_compact_artifact(path); data = artifact_path.read_bytes(); decoded = decode_compact_sequence(data)
         if audit_keys is not None:
-            verify_keyed_replay(decoded, audit_keys, tension_maps=tension_maps)
+            verify_keyed_replay(decoded, audit_keys)
         _enforce_metadata_binding(_load_run_metadata(path), artifact_path, decoded, decoded["sha256"])
         if decoded["header"].profile_id != prof.profile_id.value: raise ValueError(f"artifact profile {decoded['header'].profile_id} does not match requested {prof.profile_id.value}")
         records = reconstruct_token_evidence(decoded); token_count = len(records); chunks = (token_count + decoded["header"].chunk_token_capacity - 1)//decoded["header"].chunk_token_capacity if token_count else 0; spans=len(decoded.get("spans", []))
@@ -205,7 +205,7 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         span_overlay_operations=spans,
         allocations=token_count * 2,
         maximum_live_bytes=peak,
-        full_artifact_materializations=0,
+        full_artifact_materializations=1 if token_count > 0 else 0,
         normalized_runtime_seconds=elapsed,
     )
 
@@ -262,5 +262,5 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         minimum_budget_token_count=prof.minimum_budget_token_count,
         ceiling_bytes_per_token=prof.ceiling_bytes_per_token,
         work_certificate=cert,
-        retention_state="LOCAL_PASS",
+        retention_state="LOCAL_PASS" if ok else "LOCAL_FAIL",
     )
