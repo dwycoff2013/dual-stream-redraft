@@ -5,6 +5,8 @@ from typing import List, Optional, Dict, Any
 import binascii
 import struct
 
+import numpy as np
+
 # Appendix C (v2.2 redraft): conceptual schema for MonologueFrameV1.
 # This module provides:
 # - a concrete dataclass representation
@@ -142,11 +144,11 @@ class MonologueFrameV1:
 
 def _f16_pack(x: float) -> bytes:
     # Enforce little-endian float16.
-    return struct.pack("<e", x)
+    return np.asarray(x, dtype=np.dtype("<f2")).tobytes()
 
 
 def _f16_unpack(b: bytes) -> float:
-    return struct.unpack("<e", b)[0]
+    return float(np.frombuffer(b, dtype=np.dtype("<f2"))[0])
 
 
 def encode_frame(frame: MonologueFrameV1, include_crc32: bool = True) -> bytes:

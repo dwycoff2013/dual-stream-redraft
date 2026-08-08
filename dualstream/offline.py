@@ -45,12 +45,17 @@ def _check_cached_model(model: str, cache_dir: str | None) -> list[str]:
             "huggingface_hub is required to validate cached models. Install dependencies and retry."
         ]
 
-    def _exists(filename: str) -> bool:
+    def _get_cached_path(filename: str) -> str | None:
         try:
             cached = try_to_load_from_cache(model, filename, cache_dir=cache_dir)
-            return cached is not None and cached is not _CACHED_NO_EXIST
+            if cached is not None and cached is not _CACHED_NO_EXIST:
+                return cached
+            return None
         except Exception:
-            return False
+            return None
+
+    def _exists(filename: str) -> bool:
+        return _get_cached_path(filename) is not None
 
     missing: list[str] = []
     if not _exists("config.json"):
@@ -60,15 +65,26 @@ def _check_cached_model(model: str, cache_dir: str | None) -> list[str]:
     if not tokenizer_ok:
         missing.append("tokenizer files")
 
-    weights_ok = any(
-        _exists(name)
-        for name in [
-            "model.safetensors",
-            "model.safetensors.index.json",
-            "pytorch_model.bin",
-            "pytorch_model.bin.index.json",
-        ]
-    )
+    weights_ok = False
+    for base_weight in ["model.safetensors", "pytorch_model.bin"]:
+        if _exists(base_weight):
+            weights_ok = True
+            break
+        index_file = base_weight + ".index.json"
+        index_path = _get_cached_path(index_file)
+        if index_path:
+            try:
+                import json
+                with open(index_path, "r", encoding="utf-8") as f:
+                    index_data = json.load(f)
+                weight_map = index_data.get("weight_map", {})
+                shards = set(weight_map.values())
+                if shards and all(_exists(shard) for shard in shards):
+                    weights_ok = True
+                    break
+            except Exception:
+                pass
+
     if not weights_ok:
         missing.append("model weights")
 

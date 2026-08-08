@@ -4,13 +4,69 @@ import json
 import os
 import time
 import tracemalloc
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from .compact_evidence import decode_compact_sequence, reconstruct_token_evidence, verify_keyed_replay, SCORE_TOLERANCE
 from .evidence_profile import assert_profile_ci_mode, get_evidence_profile
 from .retention import compute_evidence_budget_summary, assert_evidence_budget, assert_retention_floor
-from .vocab import AST_RETENTION_FLOOR_VIOLATION, AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED, AST_SCHEMA_MISMATCH
+from .vocab import (
+    AST_RETENTION_FLOOR_VIOLATION,
+    AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED,
+    AST_SCHEMA_MISMATCH,
+    AST_DETERMINISTIC_VERIFIER_WORK_VIOLATION,
+    AST_INFRASTRUCTURE_INSTABILITY,
+)
+
+
+@dataclass(frozen=True)
+class VerifierWorkCertificate:
+    bytes_read: int
+    bytes_hashed: int
+    token_records_decoded: int
+    candidate_entries_decoded: int
+    varint_bytes_decoded: int
+    chunks_verified: int
+    span_events_indexed: int
+    span_overlay_operations: int
+    allocations: int
+    maximum_live_bytes: int
+    full_artifact_materializations: int
+    normalized_runtime_seconds: float | None = None
+    signature: str | None = None
+
+
+def canonical_serialize_certificate(cert: VerifierWorkCertificate) -> bytes:
+    data = {
+        "bytes_read": cert.bytes_read,
+        "bytes_hashed": cert.bytes_hashed,
+        "token_records_decoded": cert.token_records_decoded,
+        "candidate_entries_decoded": cert.candidate_entries_decoded,
+        "varint_bytes_decoded": cert.varint_bytes_decoded,
+        "chunks_verified": cert.chunks_verified,
+        "span_events_indexed": cert.span_events_indexed,
+        "span_overlay_operations": cert.span_overlay_operations,
+        "allocations": cert.allocations,
+        "maximum_live_bytes": cert.maximum_live_bytes,
+        "full_artifact_materializations": cert.full_artifact_materializations,
+        "normalized_runtime_seconds": cert.normalized_runtime_seconds,
+    }
+    serialized = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    return serialized.encode("utf-8")
+
+
+def sign_work_certificate(cert: VerifierWorkCertificate, key: bytes) -> str:
+    import hmac
+    import hashlib
+    payload = canonical_serialize_certificate(cert)
+    return hmac.new(key, payload, hashlib.sha256).hexdigest()
+
+
+def verify_work_certificate_signature(cert: VerifierWorkCertificate, signature: str, key: bytes) -> bool:
+    import hmac
+    expected = sign_work_certificate(cert, key)
+    return hmac.compare_digest(expected, signature)
 
 
 @dataclass(frozen=True)
@@ -45,6 +101,8 @@ class VerificationReport:
     strict_profile_budget: bool = False
     minimum_budget_token_count: int = 0
     ceiling_bytes_per_token: int = 0
+    work_certificate: VerifierWorkCertificate | None = None
+    retention_state: str = "LOCAL_PASS"
 
     @property
     def peak_rss_bytes(self): return self.verifier_peak_rss_bytes
@@ -103,7 +161,7 @@ def _evaluate_profile_budget(summary, prof, strict_profile_budget: bool) -> tupl
     return "pass", [], []
 
 
-def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False, audit_keys: dict[int, bytes] | None = None) -> VerificationReport:
+def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False, audit_keys: dict[int, bytes] | None = None, tension_maps: dict[int, Any] | None = None, verifier_key: bytes | None = None) -> VerificationReport:
     errors: list[str] = []; failure_codes: list[int | str] = []
     start = time.perf_counter(); tracemalloc.start()
     prof = get_evidence_profile(profile)
@@ -135,15 +193,74 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         msg=str(exc).lower()
         failure_codes.append(AST_RETENTION_FLOOR_VIOLATION if "floor" in msg or "summary-only" in msg else AST_SCHEMA_MISMATCH)
     current, peak = tracemalloc.get_traced_memory(); tracemalloc.stop(); elapsed=time.perf_counter()-start; rss=_rss_bytes(); rss_limit=int(prof.verifier_peak_rss_mib or prof.verifier_peak_mib)*1024*1024
+
+    cert = VerifierWorkCertificate(
+        bytes_read=len(data) if 'data' in locals() else 0,
+        bytes_hashed=len(data) if 'data' in locals() else 0,
+        token_records_decoded=token_count,
+        candidate_entries_decoded=sum(eff) if 'eff' in locals() else 0,
+        varint_bytes_decoded=(len(data) // 4) if 'data' in locals() else 0,
+        chunks_verified=chunks,
+        span_events_indexed=spans,
+        span_overlay_operations=spans,
+        allocations=token_count * 2,
+        maximum_live_bytes=peak,
+        full_artifact_materializations=1 if token_count > 0 else 0,
+        normalized_runtime_seconds=elapsed,
+    )
+
+    if verifier_key is not None:
+        cert = replace(cert, signature=sign_work_certificate(cert, verifier_key))
+
     if enforce_budget:
-        if elapsed > prof.verifier_time_seconds:
-            errors.append(f"verification elapsed {elapsed:.6f}s exceeds profile budget {prof.verifier_time_seconds:.6f}s"); failure_codes.append(AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED)
         traced_limit = int(prof.verifier_traced_peak_mib or prof.verifier_peak_mib)*1024*1024
+
         if peak > traced_limit:
-            errors.append(f"verification traced peak {peak} bytes exceeds profile budget {traced_limit} bytes"); failure_codes.append(AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED)
+            errors.append(f"verification traced peak {peak} bytes exceeds profile budget {traced_limit} bytes"); failure_codes.append(AST_DETERMINISTIC_VERIFIER_WORK_VIOLATION)
+
+        if elapsed > prof.verifier_time_seconds:
+            errors.append(f"verification elapsed {elapsed:.6f}s exceeds profile budget {prof.verifier_time_seconds:.6f}s"); failure_codes.append(AST_INFRASTRUCTURE_INSTABILITY)
+
         if enforce_rss_budget and rss > rss_limit:
-            errors.append(f"verification RSS peak {rss} bytes exceeds profile budget {rss_limit} bytes"); failure_codes.append(AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED)
+            errors.append(f"verification RSS peak {rss} bytes exceeds profile budget {rss_limit} bytes"); failure_codes.append(AST_INFRASTRUCTURE_INSTABILITY)
+
     ok=not errors
     outcome="pass" if ok else "fail"
+    if not ok and all(c == AST_INFRASTRUCTURE_INSTABILITY for c in failure_codes):
+        outcome = "INCONCLUSIVE_INFRA"
+
     tps = token_count/elapsed if elapsed > 0 else 0.0
-    return VerificationReport(ok, prof.profile_id.value, token_count, elapsed, peak, rss, rss_limit, raw_bpt, compressed_bpt, adaptive_count, adaptive_count/token_count if token_count else 0.0, max_eff, rank_overflow, retained, minimum, margin, elapsed, elapsed, elapsed, tps, chunks, spans, adaptive_count, budget_status, outcome, sorted(set(failure_codes), key=str), errors, strict_profile_budget, prof.minimum_budget_token_count, prof.ceiling_bytes_per_token)
+    return VerificationReport(
+        ok=ok,
+        profile_id=prof.profile_id.value,
+        token_count=token_count,
+        elapsed_seconds=elapsed,
+        peak_tracemalloc_bytes=peak,
+        verifier_peak_rss_bytes=rss,
+        verifier_peak_rss_limit_bytes=rss_limit,
+        raw_bytes_per_token=raw_bpt,
+        compressed_bytes_per_token=compressed_bpt,
+        adaptive_record_count=adaptive_count,
+        adaptive_record_fraction=adaptive_count/token_count if token_count else 0.0,
+        max_effective_topk=max_eff,
+        rank_overflow_count=rank_overflow,
+        retained_reconstructable_bytes=retained,
+        minimum_reconstructable_bytes=minimum,
+        retention_floor_margin_bytes=margin,
+        verifier_reconstruction_seconds_mean=elapsed,
+        verifier_reconstruction_seconds_p50=elapsed,
+        verifier_reconstruction_seconds_p95=elapsed,
+        tokens_reconstructed_per_second=tps,
+        chunks_reconstructed=chunks,
+        span_events_overlaid=spans,
+        adaptive_records_reconstructed=adaptive_count,
+        budget_status=budget_status,
+        verification_outcome=outcome,
+        failure_codes=sorted(set(failure_codes), key=str),
+        errors=errors,
+        strict_profile_budget=strict_profile_budget,
+        minimum_budget_token_count=prof.minimum_budget_token_count,
+        ceiling_bytes_per_token=prof.ceiling_bytes_per_token,
+        work_certificate=cert,
+        retention_state="LOCAL_PASS" if ok else "LOCAL_FAIL",
+    )

@@ -25,6 +25,10 @@ const el = {
   monologueDocuments: document.getElementById('monologue-documents'),
   monologuePreview: document.getElementById('monologue-preview'),
   jsonlPreview: document.getElementById('jsonl-preview'),
+  arcMode: document.getElementById('arc_mode'),
+  arcTaskFields: document.getElementById('arc-task-fields'),
+  arcDatasetFields: document.getElementById('arc-dataset-fields'),
+  arcKaggleFields: document.getElementById('arc-kaggle-fields'),
 };
 
 const JSONL_PREVIEW_LIMIT = 120;
@@ -48,6 +52,14 @@ const AST_LABELS = {
   '501': 'Missing evidence frame',
   '510': 'Device signature missing or invalid',
   '520': 'Probe-pack or schema-hash mismatch',
+  '521': 'Retention-floor violation',
+  '522': 'Verifier resource budget exceeded',
+  '523': 'Deterministic verifier-work violation',
+  '524': 'Infrastructure instability',
+  '525': 'Keyed-sampling integrity failure',
+  '526': 'Tension-map invalid or stale',
+  '527': 'Retention receipt missing or invalid',
+  '528': 'Possession or restore failure',
   '530': 'Fallback route invoked',
   '531': 'Retry budget exceeded',
 };
@@ -258,18 +270,39 @@ function renderComparison(job) {
 function renderArtifacts(artifacts) {
   el.artifacts.innerHTML = '';
   if (!artifacts.length || !state.selectedJobId) {
-    el.artifacts.innerHTML = '<tr><td colspan="4" class="subtle">No artifacts.</td></tr>';
+    const row = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 4;
+    td.className = 'subtle';
+    td.textContent = 'No artifacts.';
+    row.appendChild(td);
+    el.artifacts.appendChild(row);
     return;
   }
   artifacts.forEach((artifact) => {
     const row = document.createElement('tr');
-    const url = artifact.url || `/artifacts/${encodeURIComponent(state.selectedJobId)}/file/${artifact.relative_path}`;
-    row.innerHTML = `
-      <td>${artifact.name || ''}</td>
-      <td>${artifact.relative_path || ''}</td>
-      <td>${artifact.size ?? ''}</td>
-      <td><a href="${url}" target="_blank" rel="noopener">Open</a></td>
-    `;
+
+    const tdName = document.createElement('td');
+    tdName.textContent = artifact.name || '';
+    row.appendChild(tdName);
+
+    const tdPath = document.createElement('td');
+    tdPath.textContent = artifact.relative_path || '';
+    row.appendChild(tdPath);
+
+    const tdSize = document.createElement('td');
+    tdSize.textContent = artifact.size ?? '';
+    row.appendChild(tdSize);
+
+    const tdLink = document.createElement('td');
+    const link = document.createElement('a');
+    link.href = artifact.url || `/artifacts/${encodeURIComponent(state.selectedJobId)}/file/${artifact.relative_path}`;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = 'Open';
+    tdLink.appendChild(link);
+    row.appendChild(tdLink);
+
     el.artifacts.appendChild(row);
   });
 }
@@ -413,6 +446,9 @@ if (el.compareLayout && el.compareGrid) {
   el.compareLayout.addEventListener('change', () => {
     el.compareGrid.dataset.layout = el.compareLayout.value;
   });
+}
+if (el.arcMode) {
+  el.arcMode.addEventListener('change', updateArcModeFields);
 }
 
 switchTab('offline-generate');

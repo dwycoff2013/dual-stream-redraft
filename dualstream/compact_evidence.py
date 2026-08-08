@@ -41,7 +41,11 @@ _TOKEN_V33_PREFIX = struct.Struct("<BBBB")
 _TOPK_V33 = struct.Struct("<IB")
 _SPAN_V33 = struct.Struct("<IIHBI")
 _SPAN_V33_EVAL = struct.Struct("<I")
-_MANIFEST_V33 = struct.Struct("<32s32s32sIII II IIII HHHHHH 32s B 32s")
+_MANIFEST_V33 = struct.Struct("<32s32s32sIIIIIIIII H H H H H H 32s B 32s")
+# Note: _MANIFEST_V33 struct formatting must align exactly with the packing/unpacking
+# used elsewhere. The original file compacted spacing; ensure that this struct's
+# field order matches the pack/unpack usage below.
+
 _TRIGGER_NAMES = ("rank", "stochastic", "history", "canary", "multi", "escalation")
 
 TRIGGER_RANK = 0x01
@@ -118,7 +122,8 @@ def quantize_score(score: float) -> int:
 
 
 def dequantize_score(raw: int) -> float:
-    return int(raw) / SCORE_SCALE
+    # Ensure float result (explicit)
+    return float(raw) / SCORE_SCALE
 
 
 def _sha256(data: bytes) -> bytes:
@@ -167,7 +172,8 @@ def choose_effective_topk(
         rank = len(candidate_ids) + 1
     if rank <= base:
         return base
-    return min(max(int(max_adaptive_k), base), max(rank, base))
+    # take the observed rank (but at least base), and cap to the configured maximum
+    return min(int(max_adaptive_k), max(rank, base))
 
 
 def _normalise_tokens(
@@ -240,6 +246,7 @@ def keyed_sample_selected(
     value = int.from_bytes(hmac.new(key, context, hashlib.sha256).digest()[:8], "big")
     return value % 1_000_000 < int(rate_ppm)
 
+
 def audit_selection_commitment(
     key: bytes,
     *,
@@ -265,6 +272,7 @@ def audit_selection_commitment(
         f"\0{int(canary_eval)}"
     ).encode("utf-8")
     return hmac.new(key, public, hashlib.sha256).digest()
+
 
 def _commit_identity(records: list[CompactTokenEvidenceV3], base_k: int) -> str:
     h = hashlib.sha256()
@@ -297,6 +305,7 @@ def _pre_stochastic_eligibility_digest(
         h.update(struct.pack("<IBBB", rec.token_index, int(rank), int(history), int(canary)))
     return h.hexdigest()
 
+
 def _apply_v33_triggers(
     records: list[CompactTokenEvidenceV3],
     *,
@@ -312,6 +321,7 @@ def _apply_v33_triggers(
     canary_eval: bool,
     profile_id: str,
     adaptive_policy: str,
+    tension_map: Any = None,
 ) -> tuple[list[CompactTokenEvidenceV3], bytes, str, str]:
     commit = _commit_identity(records, base_k)
     eligibility_digest = _pre_stochastic_eligibility_digest(
@@ -324,10 +334,23 @@ def _apply_v33_triggers(
         raise ValueError("keyed stochastic sampling requires an audit key")
 
     out: list[CompactTokenEvidenceV3] = []
+
+    # Pre-evaluate sequence-level tension map context
+    sequence_context = {"benchmark_family_id": benchmark_id}
+    history_triggered_sequence = False
+    if tension_map is not None:
+        history_triggered_sequence = tension_map.evaluate_triggers(sequence_context)
+
     for rec in records:
         flags = rec.trigger_flags
         effective_topk = base_k
         raw_rank = rec.chosen_rank if rec.chosen_rank != 255 else max_adaptive_rank + 1
+
+        # Tension map logic (currently applied to the sequence as a whole)
+        if tension_map is not None and history_triggered_sequence:
+            flags |= TRIGGER_HISTORY
+            effective_topk = max(effective_topk, max_adaptive_rank)
+
         if adaptive_k and base_k < raw_rank <= max_adaptive_rank:
             flags |= TRIGGER_RANK
             effective_topk = max(effective_topk, raw_rank)
@@ -390,6 +413,7 @@ def _apply_v33_triggers(
         )
     return out, commitment, commit, eligibility_digest
 
+
 def encode_compact_sequence(
     tokens: Iterable[Any],
     *,
@@ -406,6 +430,7 @@ def encode_compact_sequence(
     benchmark_id: str = "",
     canary_eval: bool = False,
     assurance_class: str = "DSA-R",
+    tension_map: Any = None,
 ) -> bytes:
     if wire_version == VERSION_V33:
         return encode_compact_sequence_v33(
@@ -422,6 +447,7 @@ def encode_compact_sequence(
             benchmark_id=benchmark_id,
             canary_eval=canary_eval,
             assurance_class=assurance_class,
+            tension_map=tension_map,
         )
     if wire_version != VERSION_V32:
         raise ValueError(f"unsupported compact evidence encode version 0x{wire_version:04x}")
@@ -532,7 +558,6 @@ def _encode_v32_spans(spans: list[SignalSpanEventV3]) -> bytes:
     return bytes(body)
 
 
-
 def _normalise_v33_source_tokens(tokens: Iterable[Any], max_rank: int) -> list[CompactTokenEvidenceV3]:
     records: list[CompactTokenEvidenceV3] = []
     for index, item in enumerate(tokens):
@@ -558,6 +583,7 @@ def _normalise_v33_source_tokens(tokens: Iterable[Any], max_rank: int) -> list[C
         records.append(CompactTokenEvidenceV3(token_index, chosen_id, kept_ids, kept_scores, len(kept_ids), chosen_rank, trigger_flags, record_flags))
     return records
 
+
 def encode_compact_sequence_v33(
     tokens: Iterable[Any],
     *,
@@ -573,6 +599,7 @@ def encode_compact_sequence_v33(
     benchmark_id: str = "",
     canary_eval: bool = False,
     assurance_class: str = "DSA-R",
+    tension_map: Any = None,
 ) -> bytes:
     prof = get_evidence_profile(profile)
     if assurance_class != "DSA-R":
@@ -616,6 +643,7 @@ def encode_compact_sequence_v33(
         canary_eval=canary_eval,
         profile_id=prof.profile_id.value,
         adaptive_policy=adaptive_policy,
+        tension_map=tension_map,
     )
     spans_norm = _normalise_spans(spans)
     metadata = {
@@ -631,7 +659,14 @@ def encode_compact_sequence_v33(
     metadata_digest = _sha256(metadata_bytes)
     signal_schema_hash = hashlib.sha256(b"AST-1-v2.10").digest()
     probe_pack_hash = hashlib.sha256(b"none").digest()
-    tension_map_hash = hashlib.sha256(b"phase1-none").digest()
+
+    if tension_map is not None:
+        tension_map_id = tension_map.map_id
+        tension_map_hash = tension_map.content_hash
+    else:
+        tension_map_id = 0
+        tension_map_hash = hashlib.sha256(b"phase1-none").digest()
+
     chunks, chunk_payloads = _encode_v33_chunks(records, prof.base_k, int(chunk_token_capacity))
     span_body = _encode_v33_spans(spans_norm, len(records))
     header = _HEADER_V33.pack(
@@ -653,7 +688,7 @@ def encode_compact_sequence_v33(
         stochastic_rate_ppm,
         audit_key_id,
         commitment,
-        0,
+        tension_map_id,
         tension_map_hash,
         1,
         int(chunk_token_capacity),
@@ -696,6 +731,7 @@ def encode_compact_sequence_v33(
         ZERO_HASH,
     )
     return body_without_manifest + manifest
+
 
 def _v33_local_floor(token_count: int, chunk_count: int, span_count: int, metadata_len: int, chunk_payloads: list[bytes], span_body: bytes) -> int:
     return _HEADER_V33.size + 32 + int(metadata_len) + chunk_count * _CHUNK_V33.size + sum(len(p) for p in chunk_payloads) + len(span_body) + _MANIFEST_V33.size
@@ -826,27 +862,49 @@ def _pack_v33_manifest(
     records: list[CompactTokenEvidenceV3],
     retention_requirement_hash: bytes,
 ) -> bytes:
-    histogram = [0, 0, 0, 0]
-    trigger_counts = [0, 0, 0, 0, 0, 0]
+    # Build histogram bins: <=3, <=5, <=10, >10
+    histogram_counts = [0, 0, 0, 0]
+    # Trigger counts keyed by name for clarity
+    trigger_counts_map = {name: 0 for name in _TRIGGER_NAMES}
     bitmap = bytearray()
     for rec in records:
         if rec.effective_topk <= 3:
-            histogram[0] += 1
+            histogram_counts[0] += 1
         elif rec.effective_topk <= 5:
-            histogram[1] += 1
+            histogram_counts[1] += 1
         elif rec.effective_topk <= 10:
-            histogram[2] += 1
+            histogram_counts[2] += 1
         else:
-            histogram[3] += 1
-        bits = [TRIGGER_RANK, TRIGGER_STOCHASTIC, TRIGGER_HISTORY, TRIGGER_CANARY, TRIGGER_ESCALATION]
+            histogram_counts[3] += 1
+
         active = 0
-        for idx, bit in enumerate(bits):
+        # map the first four explicit triggers to named counters
+        mapping = [
+            ("rank", TRIGGER_RANK),
+            ("stochastic", TRIGGER_STOCHASTIC),
+            ("history", TRIGGER_HISTORY),
+            ("canary", TRIGGER_CANARY),
+        ]
+        for name, bit in mapping:
             if rec.trigger_flags & bit:
-                trigger_counts[idx] += 1
+                trigger_counts_map[name] += 1
                 active += 1
+
+        # escalation is treated separately
+        if rec.trigger_flags & TRIGGER_ESCALATION:
+            trigger_counts_map["escalation"] += 1
+            active += 1
+
+        # multi (more than one active trigger)
         if active > 1:
-            trigger_counts[4] += 1
+            trigger_counts_map["multi"] += 1
+
+        # bitmap of stochastic flag presence for quick local checks
         bitmap.append(1 if rec.trigger_flags & TRIGGER_STOCHASTIC else 0)
+
+    # Pack trigger counts in the exact order expected by the manifest struct
+    trigger_counts_tuple = tuple(trigger_counts_map[name] for name in _TRIGGER_NAMES)
+
     return _MANIFEST_V33.pack(
         artifact_hash,
         header_hash,
@@ -856,8 +914,11 @@ def _pack_v33_manifest(
         span_count,
         raw_bytes,
         min_reconstructable,
-        *histogram,
-        *trigger_counts,
+        histogram_counts[0],
+        histogram_counts[1],
+        histogram_counts[2],
+        histogram_counts[3],
+        *trigger_counts_tuple,
         _sha256(bytes(bitmap)),
         0,
         retention_requirement_hash,
@@ -967,7 +1028,14 @@ def _decode_v31(buf: bytes) -> dict[str, Any]:
     if pos != len(buf):
         raise ValueError("unexpected trailing compact evidence bytes")
     digest = hashlib.sha256(buf).hexdigest()
-    return {"header": MonologueSequenceHeaderV3(seq, token_count, profile_id, base_k, max_k, cap, schema_version=VERSION_V31), "tokens": records, "spans": spans, "meta": meta, "sha256": digest, "raw_bytes": len(buf)}
+    return {
+        "header": MonologueSequenceHeaderV3(seq, token_count, profile_id, base_k, max_k, cap, schema_version=VERSION_V31),
+        "tokens": records,
+        "spans": spans,
+        "meta": meta,
+        "sha256": digest,
+        "raw_bytes": len(buf),
+    }
 
 
 def _decode_v32(buf: bytes) -> dict[str, Any]:
@@ -988,7 +1056,19 @@ def _decode_v32(buf: bytes) -> dict[str, Any]:
     except Exception as exc:
         raise ValueError("malformed compact metadata") from exc
     pos += meta_len
-    required_meta = {"evidence_profile", "assurance_class", "signal_schema_id", "signal_schema_hash", "probe_pack_id", "probe_pack_hash", "decoder_control_flags", "adaptive_policy_id", "verifier_budget_id", "retention_floor_policy_id", "quantization_id"}
+    required_meta = {
+        "evidence_profile",
+        "assurance_class",
+        "signal_schema_id",
+        "signal_schema_hash",
+        "probe_pack_id",
+        "probe_pack_hash",
+        "decoder_control_flags",
+        "adaptive_policy_id",
+        "verifier_budget_id",
+        "retention_floor_policy_id",
+        "quantization_id",
+    }
     if not isinstance(meta, dict) or not required_meta.issubset(meta):
         raise ValueError("malformed compact metadata")
     if meta.get("profile_id", meta.get("evidence_profile")) != profile_id or meta.get("evidence_profile") != profile_id:
@@ -999,7 +1079,14 @@ def _decode_v32(buf: bytes) -> dict[str, Any]:
     if pos != len(buf):
         raise ValueError("unexpected trailing compact evidence bytes")
     digest = hashlib.sha256(buf).hexdigest()
-    return {"header": MonologueSequenceHeaderV3(seq, token_count, profile_id, base_k, max_k, cap, schema_version=VERSION_V32), "tokens": records, "spans": spans, "meta": meta, "sha256": digest, "raw_bytes": len(buf)}
+    return {
+        "header": MonologueSequenceHeaderV3(seq, token_count, profile_id, base_k, max_k, cap, schema_version=VERSION_V32),
+        "tokens": records,
+        "spans": spans,
+        "meta": meta,
+        "sha256": digest,
+        "raw_bytes": len(buf),
+    }
 
 
 def _decode_v33(buf: bytes) -> dict[str, Any]:

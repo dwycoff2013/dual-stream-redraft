@@ -257,7 +257,7 @@ class ArcSolver:
                 render = ArcDecisionFrameV1(
                     task_id=task.task_id,
                     attempt_id=1,
-                    step_index=1 + test_index,
+                    step_index=step,
                     prompt_nonce=prompt_nonce,
                     decision_type="candidate_render",
                     chosen_hypothesis_id=best.program.stable_repr(),
@@ -268,6 +268,7 @@ class ArcSolver:
                         "candidate_output_hash": hash_grid(out1),
                     },
                 )
+                step += 1
                 if self.config.require_integrity:
                     with_crc32(render)
                 frames.append(render)
@@ -276,7 +277,7 @@ class ArcSolver:
             finalize1 = ArcDecisionFrameV1(
                 task_id=task.task_id,
                 attempt_id=1,
-                step_index=10,
+                step_index=step,
                 prompt_nonce=prompt_nonce,
                 decision_type="attempt_finalize",
                 chosen_hypothesis_id=best.program.stable_repr(),
@@ -287,6 +288,7 @@ class ArcSolver:
                     "solver_confidence": min(0.99, max(0.0, best.train_fit_score + 0.2)),
                 },
             )
+            step += 1
             finalize2 = ArcDecisionFrameV1(
                 task_id=task.task_id,
                 attempt_id=2,
